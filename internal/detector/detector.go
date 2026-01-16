@@ -7,7 +7,7 @@ import (
 	"regexp"
 	"strings"
 
-	"github.com/buddyhadry/permission-guardian/internal/tmux"
+	"github.com/buddyh/permission-guardian/internal/tmux"
 )
 
 // PromptType represents the type of permission being requested

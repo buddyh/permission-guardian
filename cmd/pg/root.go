@@ -8,10 +8,10 @@ import (
 	"syscall"
 	"time"
 
-	"github.com/buddyhadry/permission-guardian/internal/detector"
-	"github.com/buddyhadry/permission-guardian/internal/rules"
-	"github.com/buddyhadry/permission-guardian/internal/tmux"
-	"github.com/buddyhadry/permission-guardian/internal/tui"
+	"github.com/buddyh/permission-guardian/internal/detector"
+	"github.com/buddyh/permission-guardian/internal/rules"
+	"github.com/buddyh/permission-guardian/internal/tmux"
+	"github.com/buddyh/permission-guardian/internal/tui"
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/spf13/cobra"
 )

@@ -7,7 +7,7 @@ import (
 	"regexp"
 	"strings"
 
-	"github.com/buddyhadry/permission-guardian/internal/detector"
+	"github.com/buddyh/permission-guardian/internal/detector"
 	"gopkg.in/yaml.v3"
 )
 

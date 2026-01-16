@@ -8,8 +8,8 @@ import (
 	"strings"
 	"time"
 
-	"github.com/buddyhadry/permission-guardian/internal/detector"
-	"github.com/buddyhadry/permission-guardian/internal/tmux"
+	"github.com/buddyh/permission-guardian/internal/detector"
+	"github.com/buddyh/permission-guardian/internal/tmux"
 	"github.com/charmbracelet/bubbles/key"
 	"github.com/charmbracelet/bubbles/spinner"
 	tea "github.com/charmbracelet/bubbletea"

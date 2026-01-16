@@ -1,4 +1,4 @@
-module github.com/buddyhadry/permission-guardian
+module github.com/buddyh/permission-guardian
 
 go 1.25.5
 
