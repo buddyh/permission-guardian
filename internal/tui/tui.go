@@ -1,0 +1,1509 @@
+// Package tui provides the terminal user interface for permission-guardian
+package tui
+
+import (
+	"fmt"
+	"os"
+	"path/filepath"
+	"strings"
+	"time"
+
+	"github.com/buddyhadry/permission-guardian/internal/detector"
+	"github.com/buddyhadry/permission-guardian/internal/tmux"
+	"github.com/charmbracelet/bubbles/key"
+	"github.com/charmbracelet/bubbles/spinner"
+	tea "github.com/charmbracelet/bubbletea"
+	"github.com/charmbracelet/lipgloss"
+)
+
+// ═══════════════════════════════════════════════════════════════════════════
+// Color Palette - Nord + Dracula inspired
+// ═══════════════════════════════════════════════════════════════════════════
+var (
+	// Base colors
+	colorBg        = lipgloss.Color("#1e2139")
+	colorSurface   = lipgloss.Color("#282c47")
+	colorBorder    = lipgloss.Color("#3e4356")
+	colorTextPri   = lipgloss.Color("#e8eaee")
+	colorTextSec   = lipgloss.Color("#9fa3b0")
+	colorTextDim   = lipgloss.Color("#5a5f72")
+
+	// Semantic colors
+	colorSuccess   = lipgloss.Color("#5eead4") // Approved/healthy
+	colorWarning   = lipgloss.Color("#fbbf24") // Waiting/pending
+	colorError     = lipgloss.Color("#ff6b6b") // Denied/error
+	colorActive    = lipgloss.Color("#a78bfa") // Working/active
+	colorInfo      = lipgloss.Color("#60a5fa") // Info/neutral
+	colorAccent    = lipgloss.Color("#f472b6") // Highlight/accent
+)
+
+// ═══════════════════════════════════════════════════════════════════════════
+// Styles
+// ═══════════════════════════════════════════════════════════════════════════
+var (
+	// Base styles
+	baseStyle = lipgloss.NewStyle().
+			Background(colorBg)
+
+	// Logo styles
+	logoStyle = lipgloss.NewStyle().
+			Foreground(colorAccent).
+			Bold(true)
+
+	logoSubStyle = lipgloss.NewStyle().
+			Foreground(colorTextSec)
+
+	// Header styles
+	headerStyle = lipgloss.NewStyle().
+			Background(colorSurface).
+			Foreground(colorTextPri).
+			Padding(0, 2)
+
+	// Panel styles
+	panelStyle = lipgloss.NewStyle().
+			Border(lipgloss.RoundedBorder()).
+			BorderForeground(colorBorder).
+			Padding(0, 1)
+
+	panelTitleStyle = lipgloss.NewStyle().
+			Foreground(colorTextSec).
+			Bold(true).
+			Padding(0, 1)
+
+	// Session list styles
+	sessionNameStyle = lipgloss.NewStyle().
+			Foreground(colorInfo).
+			Bold(true)
+
+	sessionSelectedStyle = lipgloss.NewStyle().
+				Background(colorSurface).
+				Foreground(colorTextPri)
+
+	// Status styles
+	statusWaiting = lipgloss.NewStyle().
+			Foreground(colorWarning).
+			Bold(true)
+
+	statusWorking = lipgloss.NewStyle().
+			Foreground(colorActive)
+
+	statusIdle = lipgloss.NewStyle().
+			Foreground(colorTextDim)
+
+	statusApproved = lipgloss.NewStyle().
+			Foreground(colorSuccess)
+
+	statusDenied = lipgloss.NewStyle().
+			Foreground(colorError)
+
+	statusAccent = lipgloss.NewStyle().
+			Foreground(colorAccent).
+			Bold(true)
+
+	statusAuto = lipgloss.NewStyle().
+		Foreground(colorSuccess).
+		Bold(true)
+
+	// Detail panel styles
+	detailLabelStyle = lipgloss.NewStyle().
+			Foreground(colorTextSec)
+
+	detailValueStyle = lipgloss.NewStyle().
+			Foreground(colorTextPri)
+
+	// Preview styles
+	previewStyle = lipgloss.NewStyle().
+			Foreground(colorTextPri).
+			Background(colorSurface).
+			Padding(0, 1)
+
+	// Help bar styles
+	helpStyle = lipgloss.NewStyle().
+			Foreground(colorTextDim).
+			Padding(0, 2)
+
+	helpKeyStyle = lipgloss.NewStyle().
+			Foreground(colorInfo)
+
+	// Divider
+	dividerStyle = lipgloss.NewStyle().
+			Foreground(colorBorder)
+)
+
+// ASCII Logo
+const logo = `
+ ██████╗  ██████╗
+ ██╔══██╗██╔════╝
+ ██████╔╝██║  ███╗
+ ██╔═══╝ ██║   ██║
+ ██║     ╚██████╔╝
+ ╚═╝      ╚═════╝ `
+
+const logoText = `Permission
+Guardian
+───────────
+AI Agent
+Monitor`
+
+// ═══════════════════════════════════════════════════════════════════════════
+// Key bindings
+// ═══════════════════════════════════════════════════════════════════════════
+type keyMap struct {
+	Up            key.Binding
+	Down          key.Binding
+	Approve       key.Binding
+	ApproveAlways key.Binding
+	Deny          key.Binding
+	Refresh       key.Binding
+	ToggleAuto    key.Binding
+	ViewLog       key.Binding
+	Preview       key.Binding
+	Quit          key.Binding
+}
+
+var keys = keyMap{
+	Up: key.NewBinding(
+		key.WithKeys("up", "k"),
+		key.WithHelp("↑/k", "up"),
+	),
+	Down: key.NewBinding(
+		key.WithKeys("down", "j"),
+		key.WithHelp("↓/j", "down"),
+	),
+	Approve: key.NewBinding(
+		key.WithKeys("a", "y", "enter"),
+		key.WithHelp("a", "approve"),
+	),
+	ApproveAlways: key.NewBinding(
+		key.WithKeys("s", "A"),
+		key.WithHelp("s", "approve+remember"),
+	),
+	Deny: key.NewBinding(
+		key.WithKeys("d", "n", "escape"),
+		key.WithHelp("d", "deny"),
+	),
+	Refresh: key.NewBinding(
+		key.WithKeys("r"),
+		key.WithHelp("r", "refresh"),
+	),
+	ToggleAuto: key.NewBinding(
+		key.WithKeys("t"),
+		key.WithHelp("t", "toggle auto"),
+	),
+	ViewLog: key.NewBinding(
+		key.WithKeys("l"),
+		key.WithHelp("l", "log"),
+	),
+	Preview: key.NewBinding(
+		key.WithKeys("p"),
+		key.WithHelp("p", "preview"),
+	),
+	Quit: key.NewBinding(
+		key.WithKeys("q", "ctrl+c"),
+		key.WithHelp("q", "quit"),
+	),
+}
+
+// ═══════════════════════════════════════════════════════════════════════════
+// Messages
+// ═══════════════════════════════════════════════════════════════════════════
+type tickMsg time.Time
+type sessionsMsg struct {
+	sessions []detector.WaitingSession
+	err      error
+}
+type actionMsg struct {
+	session string
+	action  string
+	err     error
+}
+
+// ═══════════════════════════════════════════════════════════════════════════
+// Auto-approve modes
+// ═══════════════════════════════════════════════════════════════════════════
+type AutoMode int
+
+const (
+	AutoOff  AutoMode = iota // No auto-approve
+	AutoSafe                 // Approve all except destructive commands
+	AutoAll                  // Approve everything (yolo)
+)
+
+func (m AutoMode) String() string {
+	switch m {
+	case AutoSafe:
+		return "SAFE"
+	case AutoAll:
+		return "ALL"
+	default:
+		return ""
+	}
+}
+
+func (m AutoMode) Next() AutoMode {
+	switch m {
+	case AutoOff:
+		return AutoSafe
+	case AutoSafe:
+		return AutoAll
+	case AutoAll:
+		return AutoOff
+	default:
+		return AutoOff
+	}
+}
+
+// Destructive command patterns - commands that should NOT be auto-approved in SAFE mode
+var destructivePatterns = []string{
+	// File deletion
+	"rm -rf", "rm -fr", "rm -r", "rm -f",
+	"rmdir",
+	// Disk operations
+	"dd if=", "dd of=",
+	"mkfs", "fdisk", "parted",
+	// Permission changes (broad)
+	"chmod -R", "chmod 777", "chmod 666",
+	"chown -R",
+	// Process killing
+	"kill -9", "killall", "pkill",
+	// Git destructive
+	"git push --force", "git push -f",
+	"git reset --hard",
+	"git clean -fd", "git clean -f",
+	// Database destructive
+	"DROP TABLE", "DROP DATABASE", "TRUNCATE",
+	"DELETE FROM", "DELETE * FROM",
+	// System
+	"sudo rm", "sudo dd", "sudo mkfs",
+	"shutdown", "reboot", "halt",
+	// Dangerous redirects
+	"> /dev/", ">/dev/",
+	// npm/package destructive
+	"npm unpublish",
+	// Docker destructive
+	"docker system prune", "docker rm -f", "docker rmi -f",
+}
+
+// isDestructiveCommand checks if a request contains destructive patterns
+func isDestructiveCommand(request string) bool {
+	reqLower := strings.ToLower(request)
+	for _, pattern := range destructivePatterns {
+		if strings.Contains(reqLower, strings.ToLower(pattern)) {
+			return true
+		}
+	}
+	return false
+}
+
+// ═══════════════════════════════════════════════════════════════════════════
+// Model
+// ═══════════════════════════════════════════════════════════════════════════
+type Model struct {
+	sessions     []detector.WaitingSession
+	cursor       int
+	spinner      spinner.Model
+	refreshRate  time.Duration
+	lastRefresh  time.Time
+	err          error
+	width        int
+	height       int
+	actionStatus string
+	actionTime   time.Time
+
+	// Auto-approve per session (mode)
+	autoApprove map[string]AutoMode
+	// Log viewing
+	showLog  bool
+	logLines []string
+	// Expanded preview mode
+	showPreview bool
+}
+
+// LogEntry represents an auto-approval log entry
+type LogEntry struct {
+	Time       time.Time
+	Session    string
+	PromptType string
+	Request    string
+}
+
+// New creates a new TUI model
+func New(refreshRate time.Duration) Model {
+	s := spinner.New()
+	s.Spinner = spinner.Dot
+	s.Style = lipgloss.NewStyle().Foreground(colorAccent)
+
+	return Model{
+		spinner:     s,
+		refreshRate: refreshRate,
+		lastRefresh: time.Now(),
+		width:       120,
+		height:      40,
+		autoApprove: make(map[string]AutoMode),
+	}
+}
+
+// logFilePath returns the path to the auto-approve log file
+func logFilePath() string {
+	home, _ := os.UserHomeDir()
+	return filepath.Join(home, ".config", "permission-guardian", "auto.log")
+}
+
+// writeLog appends an entry to the auto-approve log
+func writeLog(session string, promptType string, request string) error {
+	path := logFilePath()
+	// Ensure directory exists
+	if err := os.MkdirAll(filepath.Dir(path), 0755); err != nil {
+		return err
+	}
+
+	f, err := os.OpenFile(path, os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0644)
+	if err != nil {
+		return err
+	}
+	defer f.Close()
+
+	// Truncate request for log
+	req := strings.ReplaceAll(request, "\n", " ")
+	if len(req) > 100 {
+		req = req[:97] + "..."
+	}
+
+	entry := fmt.Sprintf("%s | %s | %s | %s\n",
+		time.Now().Format("2006-01-02 15:04:05"),
+		session,
+		promptType,
+		req,
+	)
+	_, err = f.WriteString(entry)
+	return err
+}
+
+// readLog reads the last N lines from the log file
+func readLog(maxLines int) []string {
+	path := logFilePath()
+	data, err := os.ReadFile(path)
+	if err != nil {
+		return []string{"No log entries yet"}
+	}
+
+	lines := strings.Split(strings.TrimSpace(string(data)), "\n")
+	if len(lines) > maxLines {
+		lines = lines[len(lines)-maxLines:]
+	}
+
+	// Reverse to show newest first
+	for i, j := 0, len(lines)-1; i < j; i, j = i+1, j-1 {
+		lines[i], lines[j] = lines[j], lines[i]
+	}
+
+	return lines
+}
+
+func (m Model) Init() tea.Cmd {
+	return tea.Batch(
+		m.spinner.Tick,
+		fetchSessions,
+		tickCmd(m.refreshRate),
+	)
+}
+
+func tickCmd(d time.Duration) tea.Cmd {
+	return tea.Tick(d, func(t time.Time) tea.Msg {
+		return tickMsg(t)
+	})
+}
+
+func fetchSessions() tea.Msg {
+	sessions, err := detector.GetAllAgentSessions(50)
+	return sessionsMsg{sessions: sessions, err: err}
+}
+
+func approveSession(sessionName string) tea.Cmd {
+	return func() tea.Msg {
+		if err := tmux.SendKeys(sessionName, "1"); err != nil {
+			return actionMsg{session: sessionName, action: "approve", err: err}
+		}
+		time.Sleep(100 * time.Millisecond)
+		if err := tmux.SendEnter(sessionName); err != nil {
+			return actionMsg{session: sessionName, action: "approve", err: err}
+		}
+		return actionMsg{session: sessionName, action: "approved", err: nil}
+	}
+}
+
+func approveSessionAlways(sessionName string) tea.Cmd {
+	return func() tea.Msg {
+		// Send "2" for "Yes, and don't ask again"
+		if err := tmux.SendKeys(sessionName, "2"); err != nil {
+			return actionMsg{session: sessionName, action: "approve+remember", err: err}
+		}
+		time.Sleep(100 * time.Millisecond)
+		if err := tmux.SendEnter(sessionName); err != nil {
+			return actionMsg{session: sessionName, action: "approve+remember", err: err}
+		}
+		return actionMsg{session: sessionName, action: "approved+remembered", err: nil}
+	}
+}
+
+func denySession(sessionName string) tea.Cmd {
+	return func() tea.Msg {
+		if err := tmux.SendKeys(sessionName, "Escape"); err != nil {
+			return actionMsg{session: sessionName, action: "deny", err: err}
+		}
+		return actionMsg{session: sessionName, action: "denied", err: nil}
+	}
+}
+
+func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
+	switch msg := msg.(type) {
+	case tea.KeyMsg:
+		// If viewing log, any key exits log view
+		if m.showLog {
+			m.showLog = false
+			return m, nil
+		}
+
+		// If viewing preview, any key exits preview view
+		if m.showPreview {
+			m.showPreview = false
+			return m, nil
+		}
+
+		// Handle number keys 1-9 for quick approve
+		if len(msg.String()) == 1 && msg.String() >= "1" && msg.String() <= "9" {
+			idx := int(msg.String()[0] - '1')
+			waitingSessions := m.getWaitingSessions()
+			if idx < len(waitingSessions) {
+				return m, approveSession(waitingSessions[idx].Session.Name)
+			}
+		}
+
+		// Handle shift+number keys (!@#$%^&*() for quick approve+remember
+		shiftNumbers := "!@#$%^&*()"
+		if len(msg.String()) == 1 {
+			if idx := strings.Index(shiftNumbers, msg.String()); idx != -1 {
+				waitingSessions := m.getWaitingSessions()
+				if idx < len(waitingSessions) {
+					return m, approveSessionAlways(waitingSessions[idx].Session.Name)
+				}
+			}
+		}
+
+		switch {
+		case key.Matches(msg, keys.Quit):
+			return m, tea.Quit
+
+		case key.Matches(msg, keys.Up):
+			if m.cursor > 0 {
+				m.cursor--
+			}
+
+		case key.Matches(msg, keys.Down):
+			if m.cursor < len(m.sessions)-1 {
+				m.cursor++
+			}
+
+		case key.Matches(msg, keys.Approve):
+			if m.cursor < len(m.sessions) {
+				session := m.sessions[m.cursor]
+				if session.PromptType != detector.PromptUnknown {
+					return m, approveSession(session.Session.Name)
+				}
+			}
+
+		case key.Matches(msg, keys.ApproveAlways):
+			if m.cursor < len(m.sessions) {
+				session := m.sessions[m.cursor]
+				if session.PromptType != detector.PromptUnknown {
+					return m, approveSessionAlways(session.Session.Name)
+				}
+			}
+
+		case key.Matches(msg, keys.Deny):
+			if m.cursor < len(m.sessions) {
+				session := m.sessions[m.cursor]
+				if session.PromptType != detector.PromptUnknown {
+					return m, denySession(session.Session.Name)
+				}
+			}
+
+		case key.Matches(msg, keys.Refresh):
+			return m, fetchSessions
+
+		case key.Matches(msg, keys.ToggleAuto):
+			// Cycle auto-approve mode for selected session: OFF -> SAFE -> ALL -> OFF
+			if m.cursor < len(m.sessions) {
+				name := m.sessions[m.cursor].Session.Name
+				currentMode := m.autoApprove[name]
+				newMode := currentMode.Next()
+				m.autoApprove[name] = newMode
+
+				switch newMode {
+				case AutoOff:
+					m.actionStatus = fmt.Sprintf("AUTO OFF: %s", name)
+				case AutoSafe:
+					m.actionStatus = fmt.Sprintf("AUTO SAFE: %s (skip destructive)", name)
+				case AutoAll:
+					m.actionStatus = fmt.Sprintf("AUTO ALL: %s (approve everything)", name)
+				}
+				m.actionTime = time.Now()
+			}
+
+		case key.Matches(msg, keys.ViewLog):
+			// Toggle log view
+			m.showLog = true
+			m.logLines = readLog(20)
+
+		case key.Matches(msg, keys.Preview):
+			// Toggle expanded preview for current session
+			if m.cursor < len(m.sessions) {
+				m.showPreview = !m.showPreview
+			}
+		}
+
+	case tea.WindowSizeMsg:
+		m.width = msg.Width
+		m.height = msg.Height
+
+	case tickMsg:
+		m.lastRefresh = time.Now()
+		// Clear old action status
+		if time.Since(m.actionTime) > 3*time.Second {
+			m.actionStatus = ""
+		}
+
+		// Auto-approve any waiting sessions based on their mode
+		var cmds []tea.Cmd
+		for _, session := range m.sessions {
+			if session.PromptType == detector.PromptUnknown {
+				continue // Not waiting
+			}
+
+			mode := m.autoApprove[session.Session.Name]
+			if mode == AutoOff {
+				continue // Auto-approve disabled
+			}
+
+			// Check if we should approve based on mode
+			shouldApprove := false
+			skipReason := ""
+
+			if mode == AutoAll {
+				// Approve everything
+				shouldApprove = true
+			} else if mode == AutoSafe {
+				// Approve unless it's a destructive command
+				if isDestructiveCommand(session.Request) {
+					skipReason = "destructive"
+				} else {
+					shouldApprove = true
+				}
+			}
+
+			if shouldApprove {
+				writeLog(session.Session.Name, string(session.PromptType), session.Request)
+				cmds = append(cmds, approveSession(session.Session.Name))
+				m.actionStatus = fmt.Sprintf("AUTO: %s", session.Session.Name)
+				m.actionTime = time.Now()
+			} else if skipReason != "" {
+				m.actionStatus = fmt.Sprintf("SKIP (%s): %s", skipReason, session.Session.Name)
+				m.actionTime = time.Now()
+			}
+		}
+
+		cmds = append(cmds, fetchSessions, tickCmd(m.refreshRate))
+		return m, tea.Batch(cmds...)
+
+	case sessionsMsg:
+		m.sessions = msg.sessions
+		m.err = msg.err
+		if m.cursor >= len(m.sessions) && len(m.sessions) > 0 {
+			m.cursor = len(m.sessions) - 1
+		}
+
+	case actionMsg:
+		m.actionTime = time.Now()
+		if msg.err != nil {
+			m.actionStatus = fmt.Sprintf("Error: %v", msg.err)
+		} else {
+			m.actionStatus = fmt.Sprintf("%s %s", msg.action, msg.session)
+		}
+		return m, fetchSessions
+
+	case spinner.TickMsg:
+		var cmd tea.Cmd
+		m.spinner, cmd = m.spinner.Update(msg)
+		return m, cmd
+	}
+
+	return m, nil
+}
+
+func (m Model) getWaitingSessions() []detector.WaitingSession {
+	var waiting []detector.WaitingSession
+	for _, s := range m.sessions {
+		if s.PromptType != detector.PromptUnknown {
+			waiting = append(waiting, s)
+		}
+	}
+	return waiting
+}
+
+// ═══════════════════════════════════════════════════════════════════════════
+// View
+// ═══════════════════════════════════════════════════════════════════════════
+func (m Model) View() string {
+	if m.err != nil {
+		return fmt.Sprintf("\n  Error: %v\n\n  Press q to quit.\n", m.err)
+	}
+
+	width := m.width
+	if width < 80 {
+		width = 80
+	}
+	height := m.height
+	if height < 15 {
+		height = 15
+	}
+
+	// If showing log, render log view instead
+	if m.showLog {
+		return m.renderLogView(width, height)
+	}
+
+	// If showing expanded preview, render preview view
+	if m.showPreview {
+		return m.renderPreviewView(width, height)
+	}
+
+	var sections []string
+
+	// Header with logo (8 lines)
+	sections = append(sections, m.renderHeader(width))
+
+	// Help bar (2 lines)
+	helpBar := m.renderHelpBar(width)
+
+	// Main content gets ALL remaining space - sessions are priority
+	// Header ~8 lines, help ~2 lines, leave rest for sessions
+	mainHeight := height - 10
+	if mainHeight < 5 {
+		mainHeight = 5
+	}
+	sections = append(sections, m.renderMainContent(width, mainHeight))
+
+	sections = append(sections, helpBar)
+
+	return lipgloss.JoinVertical(lipgloss.Left, sections...)
+}
+
+func (m Model) renderLogView(width, height int) string {
+	title := statusAccent.Render(" AUTO-APPROVE LOG (press any key to close) ")
+
+	var lines []string
+	lines = append(lines, "")
+	lines = append(lines, title)
+	lines = append(lines, "")
+	lines = append(lines, dividerStyle.Render(strings.Repeat("─", width-4)))
+
+	for _, line := range m.logLines {
+		if len(line) > width-4 {
+			line = line[:width-7] + "..."
+		}
+		lines = append(lines, "  "+line)
+	}
+
+	// Count auto-approve sessions by mode
+	safeCount := 0
+	allCount := 0
+	for _, mode := range m.autoApprove {
+		switch mode {
+		case AutoSafe:
+			safeCount++
+		case AutoAll:
+			allCount++
+		}
+	}
+
+	lines = append(lines, "")
+	lines = append(lines, dividerStyle.Render(strings.Repeat("─", width-4)))
+	lines = append(lines, fmt.Sprintf("  Auto-approve: %d SAFE, %d ALL", safeCount, allCount))
+	lines = append(lines, fmt.Sprintf("  Log file: %s", logFilePath()))
+	lines = append(lines, "")
+	lines = append(lines, detailLabelStyle.Render("  SAFE mode skips destructive commands (rm -rf, git push --force, etc.)"))
+
+	return lipgloss.JoinVertical(lipgloss.Left, lines...)
+}
+
+func (m Model) renderPreviewView(width, height int) string {
+	if m.cursor >= len(m.sessions) {
+		m.showPreview = false
+		return ""
+	}
+
+	session := m.sessions[m.cursor]
+
+	// Title bar
+	title := statusAccent.Render(fmt.Sprintf(" PREVIEW: %s (press any key to close) ", session.Session.Name))
+
+	var lines []string
+	lines = append(lines, "")
+	lines = append(lines, title)
+	lines = append(lines, "")
+
+	// Session metadata
+	metaStyle := detailLabelStyle
+	valStyle := detailValueStyle
+
+	lines = append(lines, metaStyle.Render("  Session: ")+valStyle.Render(session.Session.Name))
+	lines = append(lines, metaStyle.Render("  Agent:   ")+valStyle.Render(string(session.Agent)))
+	if session.Info.Model != "" {
+		lines = append(lines, metaStyle.Render("  Model:   ")+valStyle.Render(session.Info.Model))
+	}
+	if session.CWD != "" && session.CWD != "unknown" {
+		cwd := session.CWD
+		if strings.HasPrefix(cwd, "/Users/") {
+			parts := strings.SplitN(cwd, "/", 4)
+			if len(parts) >= 4 {
+				cwd = "~/" + parts[3]
+			}
+		}
+		lines = append(lines, metaStyle.Render("  Dir:     ")+valStyle.Render(cwd))
+	}
+
+	lines = append(lines, "")
+	lines = append(lines, dividerStyle.Render(strings.Repeat("─", width-4)))
+
+	// Show request prominently if waiting
+	if session.PromptType != detector.PromptUnknown {
+		promptType := strings.ToUpper(string(session.PromptType))
+		lines = append(lines, "")
+		lines = append(lines, statusWaiting.Bold(true).Render(fmt.Sprintf("  %s REQUEST:", promptType)))
+		lines = append(lines, "")
+
+		// Show the extracted request (this is the good parsed content)
+		reqLines := strings.Split(session.Request, "\n")
+		for _, line := range reqLines {
+			if len(line) > width-6 {
+				line = line[:width-9] + "..."
+			}
+			lines = append(lines, "  "+statusWaiting.Render(line))
+		}
+
+		lines = append(lines, "")
+		lines = append(lines, dividerStyle.Render(strings.Repeat("─", width-4)))
+	}
+
+	// Raw content - show as much as fits
+	lines = append(lines, "")
+	lines = append(lines, detailLabelStyle.Render("  RAW PANE CONTENT:"))
+	lines = append(lines, "")
+
+	rawLines := strings.Split(session.RawContent, "\n")
+	maxRawLines := height - len(lines) - 2
+	if maxRawLines < 5 {
+		maxRawLines = 5
+	}
+	if len(rawLines) > maxRawLines {
+		rawLines = rawLines[len(rawLines)-maxRawLines:]
+	}
+	for _, line := range rawLines {
+		if len(line) > width-6 {
+			line = line[:width-9] + "..."
+		}
+		lines = append(lines, "  "+previewStyle.Render(line))
+	}
+
+	return lipgloss.JoinVertical(lipgloss.Left, lines...)
+}
+
+func (m Model) renderHeader(width int) string {
+	// Logo section
+	logoLines := strings.Split(logo, "\n")
+	textLines := strings.Split(logoText, "\n")
+
+	var headerLines []string
+	maxLogoLines := max(len(logoLines), len(textLines))
+
+	for i := 0; i < maxLogoLines; i++ {
+		logoLine := ""
+		textLine := ""
+		if i < len(logoLines) {
+			logoLine = logoLines[i]
+		}
+		if i < len(textLines) {
+			textLine = textLines[i]
+		}
+		line := logoStyle.Render(fmt.Sprintf("%-20s", logoLine)) + "  " + logoSubStyle.Render(textLine)
+		headerLines = append(headerLines, line)
+	}
+
+	logoBlock := lipgloss.JoinVertical(lipgloss.Left, headerLines...)
+
+	// Stats section
+	waiting := m.getWaitingSessions()
+	totalSessions := len(m.sessions)
+	waitingCount := len(waiting)
+
+	var statusText string
+	if waitingCount > 0 {
+		statusText = statusWaiting.Render(fmt.Sprintf("  %d WAITING", waitingCount))
+	} else {
+		statusText = statusApproved.Render("  ALL CLEAR")
+	}
+
+	stats := fmt.Sprintf(
+		"%s sessions %s %s",
+		detailValueStyle.Render(fmt.Sprintf("%d", totalSessions)),
+		statusText,
+		m.spinner.View(),
+	)
+
+	// Action status
+	actionLine := ""
+	if m.actionStatus != "" {
+		switch {
+		case strings.HasPrefix(m.actionStatus, "approved+remembered"):
+			actionLine = statusAccent.Render("  " + m.actionStatus + " (won't ask again)")
+		case strings.HasPrefix(m.actionStatus, "approved"), strings.HasPrefix(m.actionStatus, "AUTO:"):
+			actionLine = statusApproved.Render("  " + m.actionStatus)
+		case strings.HasPrefix(m.actionStatus, "denied"):
+			actionLine = statusDenied.Render("  " + m.actionStatus)
+		case strings.HasPrefix(m.actionStatus, "AUTO SAFE"), strings.HasPrefix(m.actionStatus, "AUTO ALL"):
+			actionLine = statusAuto.Render("  " + m.actionStatus)
+		case strings.HasPrefix(m.actionStatus, "AUTO OFF"):
+			actionLine = statusIdle.Render("  " + m.actionStatus)
+		case strings.HasPrefix(m.actionStatus, "SKIP"):
+			actionLine = statusWaiting.Render("  " + m.actionStatus)
+		default:
+			actionLine = detailValueStyle.Render("  " + m.actionStatus)
+		}
+	}
+
+	statsBlock := lipgloss.JoinVertical(lipgloss.Left,
+		"",
+		"",
+		stats,
+		actionLine,
+	)
+
+	// Combine logo and stats
+	header := lipgloss.JoinHorizontal(lipgloss.Top, logoBlock, "    ", statsBlock)
+
+	return header + "\n"
+}
+
+func (m Model) renderMainContent(width, height int) string {
+	// Check if we need detail panel (only for waiting sessions)
+	showDetail := m.cursor < len(m.sessions) && m.sessions[m.cursor].PromptType != detector.PromptUnknown
+
+	// Detail panel is compact - only 6 lines when shown
+	detailHeight := 0
+	if showDetail {
+		detailHeight = 6
+	}
+
+	// Table gets all remaining height - sessions are priority!
+	tableHeight := height - detailHeight
+	if tableHeight < 5 {
+		tableHeight = 5
+	}
+
+	// Full-width session table at top
+	tablePanel := m.renderSessionTable(width, tableHeight)
+
+	// Detail panel at bottom (only if waiting session selected)
+	var detailPanel string
+	if showDetail {
+		detailPanel = m.renderDetailPanel(width, detailHeight)
+	}
+
+	return lipgloss.JoinVertical(lipgloss.Left, tablePanel, detailPanel)
+}
+
+// Column widths for perfect alignment (inner content width, not including separators)
+const (
+	colNum    = 3  // "1." or "  "
+	colName   = 18 // session name
+	colStatus = 8  // WAITING/idle/working
+	colModel  = 9  // Opus 4.5
+	colCtx    = 6  // progress bar
+	colGit    = 14 // branch (+x,-y)
+	colDir    = 25 // directory (fixed width now)
+	// colReq takes remaining space
+)
+
+// Column separator
+const colSep = " │ "
+
+func (m Model) renderSessionTable(width, height int) string {
+	title := panelTitleStyle.Render("SESSIONS")
+
+	// Calculate request column width (takes remaining space)
+	// Total separators: 7 (between 8 columns)
+	sepWidth := len(colSep) * 7
+	fixedWidth := colNum + colName + colStatus + colModel + colCtx + colGit + colDir + sepWidth + 4 // +4 for padding
+	colReq := width - fixedWidth
+	if colReq < 20 {
+		colReq = 20
+	}
+
+	// Build header with visible separators
+	sepStyle := lipgloss.NewStyle().Foreground(colorBorder)
+	headerTextStyle := lipgloss.NewStyle().Foreground(colorTextDim).Bold(true)
+
+	headerCells := []string{
+		headerTextStyle.Width(colNum).Render("#"),
+		headerTextStyle.Width(colName).Render("SESSION"),
+		headerTextStyle.Width(colStatus).Render("STATUS"),
+		headerTextStyle.Width(colModel).Render("MODEL"),
+		headerTextStyle.Width(colCtx).Render("CTX"),
+		headerTextStyle.Width(colGit).Render("GIT"),
+		headerTextStyle.Width(colDir).Render("DIRECTORY"),
+		headerTextStyle.Width(colReq).Render("REQUEST"),
+	}
+	headerLine := " " + strings.Join(headerCells, sepStyle.Render(colSep))
+
+	// Divider with column breaks
+	divParts := []string{
+		strings.Repeat("─", colNum),
+		strings.Repeat("─", colName),
+		strings.Repeat("─", colStatus),
+		strings.Repeat("─", colModel),
+		strings.Repeat("─", colCtx),
+		strings.Repeat("─", colGit),
+		strings.Repeat("─", colDir),
+		strings.Repeat("─", colReq),
+	}
+	divider := dividerStyle.Render(" " + strings.Join(divParts, "─┼─"))
+
+	var lines []string
+	lines = append(lines, headerLine)
+	lines = append(lines, divider)
+
+	waitingNum := 1
+	for i, session := range m.sessions {
+		isSelected := i == m.cursor
+		line := m.renderTableRow(session, isSelected, waitingNum, width-4, i, colReq)
+		lines = append(lines, line)
+
+		if session.PromptType != detector.PromptUnknown {
+			waitingNum++
+		}
+	}
+
+	if len(m.sessions) == 0 {
+		lines = append(lines, statusIdle.Render("  No sessions found"))
+	}
+
+	content := lipgloss.JoinVertical(lipgloss.Left, lines...)
+
+	// NO padding - sessions get exactly the space they need
+	// Only truncate if we have more lines than can fit
+	contentLines := strings.Split(content, "\n")
+	maxLines := height - 3
+	if maxLines > 0 && len(contentLines) > maxLines {
+		contentLines = contentLines[:maxLines]
+	}
+	content = strings.Join(contentLines, "\n")
+
+	panel := panelStyle.Width(width).Render(
+		lipgloss.JoinVertical(lipgloss.Left, title, content),
+	)
+
+	return panel
+}
+
+func (m Model) renderTableRow(session detector.WaitingSession, selected bool, waitingNum int, width int, rowIndex int, colReq int) string {
+	isWaiting := session.PromptType != detector.PromptUnknown
+	sepStyle := lipgloss.NewStyle().Foreground(colorBorder)
+
+	// NUM column - "1." for waiting, empty for others
+	var numText string
+	var numStyle lipgloss.Style
+	if isWaiting {
+		numText = fmt.Sprintf("%d.", waitingNum)
+		numStyle = statusWaiting.Bold(true)
+	} else {
+		numText = ""
+		numStyle = statusIdle
+	}
+
+	// SESSION NAME
+	name := session.Session.Name
+	if len(name) > colName {
+		name = name[:colName-3] + "..."
+	}
+
+	// STATUS with indicator - show auto mode if enabled
+	autoMode := m.autoApprove[session.Session.Name]
+	var statusText string
+	var statusStyle lipgloss.Style
+	if autoMode != AutoOff {
+		// Show auto mode: SAFE or ALL
+		statusText = autoMode.String()
+		statusStyle = statusAuto
+	} else if isWaiting {
+		statusText = "WAITING"
+		statusStyle = statusWaiting
+	} else if session.Info.IsWorking {
+		statusText = session.Info.WorkingStatus
+		if statusText == "" {
+			statusText = "working"
+		}
+		if len(statusText) > colStatus {
+			statusText = statusText[:colStatus-3] + "..."
+		}
+		statusStyle = statusWorking
+	} else {
+		statusText = "idle"
+		statusStyle = statusIdle
+	}
+
+	// MODEL - trim and truncate
+	model := strings.TrimSpace(session.Info.Model)
+	if model == "" {
+		model = "-"
+	}
+	if len(model) > colModel {
+		model = model[:colModel]
+	}
+
+	// CTX - visual bar (already returns fixed width string)
+	ctxBar := renderContextBar(session.Info.ContextSize)
+
+	// GIT - trim, add changes, then truncate
+	git := strings.TrimSpace(session.Info.GitBranch)
+	if git == "" || git == "no" {
+		// "no" comes from "no git" - display as dash
+		git = "-"
+	} else {
+		// Add git changes if present
+		if changes := strings.TrimSpace(session.Info.GitChanges); changes != "" {
+			git = git + " " + changes
+		}
+		if len(git) > colGit {
+			git = git[:colGit-3] + "..."
+		}
+	}
+
+	// DIRECTORY - always shown
+	dir := session.CWD
+	if dir == "" || dir == "unknown" {
+		dir = "-"
+	} else {
+		if strings.HasPrefix(dir, "/Users/") {
+			parts := strings.SplitN(dir, "/", 4)
+			if len(parts) >= 4 {
+				dir = "~/" + parts[3]
+			}
+		}
+		if len(dir) > colDir {
+			dir = smartTruncate(dir, colDir)
+		}
+	}
+
+	// REQUEST - show for waiting sessions, dash for others
+	var req string
+	var reqStyle lipgloss.Style
+	if isWaiting {
+		req = session.Request
+		if req == "" {
+			req = string(session.PromptType) + " request"
+		}
+		// Clean up the request text
+		req = strings.ReplaceAll(req, "\n", " ")
+		req = strings.TrimSpace(req)
+		if len(req) > colReq {
+			req = req[:colReq-3] + "..."
+		}
+		reqStyle = statusWaiting
+	} else {
+		req = "-"
+		reqStyle = statusIdle
+	}
+
+	// Build row cells using lipgloss Width() for perfect alignment
+	cells := []string{
+		numStyle.Width(colNum).Render(numText),
+		sessionNameStyle.Width(colName).Render(name),
+		statusStyle.Width(colStatus).Render(statusText),
+		detailLabelStyle.Width(colModel).Render(model),
+		ctxBar, // Already 6 chars wide
+		detailLabelStyle.Width(colGit).Render(git),
+		detailLabelStyle.Width(colDir).Render(dir),
+		reqStyle.Width(colReq).Render(req),
+	}
+
+	row := " " + strings.Join(cells, sepStyle.Render(colSep))
+
+	// Zebra striping and selection
+	if selected {
+		row = sessionSelectedStyle.Width(width).Render(row)
+	} else if rowIndex%2 == 1 {
+		row = lipgloss.NewStyle().Background(lipgloss.Color("#252840")).Width(width).Render(row)
+	}
+
+	return row
+}
+
+func (m Model) renderSessionRow(session detector.WaitingSession, selected bool, waitingNum int, width int, rowIndex int) string {
+	isWaiting := session.PromptType != detector.PromptUnknown
+
+	// Prefix column (3 chars)
+	var prefix string
+	if isWaiting {
+		prefix = fmt.Sprintf("%d.", waitingNum)
+	} else {
+		prefix = "  "
+	}
+
+	// Status indicator (1 char)
+	var indicator string
+	var indicatorStyle lipgloss.Style
+	if isWaiting {
+		indicator = ""
+		indicatorStyle = statusWaiting
+	} else if session.Info.IsWorking {
+		indicator = ""
+		indicatorStyle = statusWorking
+	} else {
+		indicator = ""
+		indicatorStyle = statusIdle
+	}
+
+	// Session name (20 chars)
+	name := session.Session.Name
+	if len(name) > 18 {
+		name = name[:15] + "..."
+	}
+
+	// Status (10 chars)
+	var statusText string
+	var statusStyle lipgloss.Style
+	if isWaiting {
+		statusText = "WAITING"
+		statusStyle = statusWaiting
+	} else if session.Info.IsWorking {
+		statusText = session.Info.WorkingStatus
+		if statusText == "" {
+			statusText = "working"
+		}
+		if len(statusText) > 10 {
+			statusText = statusText[:7] + "..."
+		}
+		statusStyle = statusWorking
+	} else {
+		statusText = "idle"
+		statusStyle = statusIdle
+	}
+
+	// Model (8 chars) - just show "Opus 4.5" or "Sonnet" etc
+	model := session.Info.Model
+	if model == "" {
+		model = "-"
+	} else if len(model) > 8 {
+		model = model[:8]
+	}
+
+	// Context bar (8 chars) - visual progress bar!
+	ctxBar := renderContextBar(session.Info.ContextSize)
+
+	// Git (15 chars)
+	git := session.Info.GitBranch
+	if git == "" {
+		git = "-"
+	} else {
+		if session.Info.GitChanges != "" {
+			git += " " + session.Info.GitChanges
+		}
+		if len(git) > 15 {
+			git = git[:12] + "..."
+		}
+	}
+
+	// CWD (remaining) - smart middle truncation
+	cwd := session.CWD
+	if cwd == "" || cwd == "unknown" {
+		cwd = "-"
+	} else {
+		if strings.HasPrefix(cwd, "/Users/") {
+			parts := strings.SplitN(cwd, "/", 4)
+			if len(parts) >= 4 {
+				cwd = "~/" + parts[3]
+			}
+		}
+		cwdWidth := width - 75
+		if cwdWidth < 15 {
+			cwdWidth = 15
+		}
+		if len(cwd) > cwdWidth {
+			// Smart middle truncation: ~/repos/.../filename
+			cwd = smartTruncate(cwd, cwdWidth)
+		}
+	}
+
+	// Build the row with fixed columns
+	row := fmt.Sprintf(" %s %s %-18s  %-10s  %-8s  %s  %-15s  %s",
+		indicatorStyle.Render(prefix),
+		indicatorStyle.Render(indicator),
+		sessionNameStyle.Render(name),
+		statusStyle.Render(statusText),
+		detailLabelStyle.Render(model),
+		ctxBar,
+		detailLabelStyle.Render(git),
+		detailLabelStyle.Render(cwd),
+	)
+
+	// Zebra striping for unselected rows
+	if selected {
+		row = sessionSelectedStyle.Width(width).Render(row)
+	} else if rowIndex%2 == 1 {
+		row = lipgloss.NewStyle().Background(lipgloss.Color("#252840")).Width(width).Render(row)
+	}
+
+	return row
+}
+
+// renderContextBar creates a visual progress bar for context size
+func renderContextBar(ctxSize string) string {
+	if ctxSize == "" {
+		return lipgloss.NewStyle().Foreground(colorTextDim).Width(colCtx).Render("-")
+	}
+
+	// Parse context size (e.g., "133.1k" -> 133100)
+	var value float64
+	ctxSize = strings.TrimSpace(ctxSize)
+	if strings.HasSuffix(ctxSize, "k") {
+		fmt.Sscanf(ctxSize, "%fk", &value)
+		value *= 1000
+	} else {
+		fmt.Sscanf(ctxSize, "%f", &value)
+	}
+
+	// Assume max context is 200k, calculate percentage
+	maxCtx := 200000.0
+	pct := value / maxCtx
+	if pct > 1.0 {
+		pct = 1.0
+	}
+
+	// Create bar (colCtx chars wide)
+	barWidth := colCtx
+	filled := int(pct * float64(barWidth))
+	if filled > barWidth {
+		filled = barWidth
+	}
+
+	bar := strings.Repeat("█", filled) + strings.Repeat("░", barWidth-filled)
+
+	// Color based on usage
+	var barStyle lipgloss.Style
+	if pct > 0.8 {
+		barStyle = lipgloss.NewStyle().Foreground(colorError)
+	} else if pct > 0.6 {
+		barStyle = lipgloss.NewStyle().Foreground(colorWarning)
+	} else {
+		barStyle = lipgloss.NewStyle().Foreground(colorSuccess)
+	}
+
+	return barStyle.Width(colCtx).Render(bar)
+}
+
+// smartTruncate truncates from the middle, preserving start and end
+func smartTruncate(s string, maxLen int) string {
+	if len(s) <= maxLen {
+		return s
+	}
+	if maxLen < 10 {
+		return s[:maxLen-3] + "..."
+	}
+	// Keep first part and last part
+	keepStart := (maxLen - 3) / 2
+	keepEnd := maxLen - 3 - keepStart
+	return s[:keepStart] + "..." + s[len(s)-keepEnd:]
+}
+
+func (m Model) renderDetailPanel(width, height int) string {
+	if m.cursor >= len(m.sessions) {
+		return ""
+	}
+
+	session := m.sessions[m.cursor]
+	if session.PromptType == detector.PromptUnknown {
+		return ""
+	}
+
+	// Title with prompt type and preview hint
+	promptType := strings.ToUpper(string(session.PromptType))
+	title := statusWaiting.Bold(true).Render(fmt.Sprintf(" %s REQUEST ", promptType)) +
+		detailLabelStyle.Render(" [p] expand")
+
+	// Show the parsed request - this is the good content!
+	var previewLines []string
+	request := session.Request
+	if request == "" {
+		request = "(no request details extracted)"
+	}
+
+	// Wrap long requests to fit width
+	maxLineWidth := width - 8
+	reqLines := strings.Split(request, "\n")
+	for _, line := range reqLines {
+		line = strings.TrimSpace(line)
+		if line == "" {
+			continue
+		}
+		// Word-wrap long lines
+		for len(line) > maxLineWidth {
+			previewLines = append(previewLines, "  "+statusWaiting.Render(line[:maxLineWidth]))
+			line = line[maxLineWidth:]
+		}
+		if line != "" {
+			previewLines = append(previewLines, "  "+statusWaiting.Render(line))
+		}
+	}
+
+	// Limit to available height
+	maxLines := height - 3
+	if maxLines < 2 {
+		maxLines = 2
+	}
+	if len(previewLines) > maxLines {
+		previewLines = previewLines[:maxLines-1]
+		previewLines = append(previewLines, detailLabelStyle.Render("  ...press [p] for full preview"))
+	}
+
+	content := strings.Join(previewLines, "\n")
+
+	panel := panelStyle.Width(width).Render(
+		lipgloss.JoinVertical(lipgloss.Left, title, content),
+	)
+
+	return panel
+}
+
+func (m Model) renderSessionDetails(session detector.WaitingSession, width, height int) string {
+	var lines []string
+
+	// Session info
+	lines = append(lines, m.detailLine("Session", session.Session.Name, width))
+	lines = append(lines, m.detailLine("Agent", string(session.Agent), width))
+
+	// Status
+	var status string
+	if session.PromptType != detector.PromptUnknown {
+		status = statusWaiting.Render("WAITING FOR APPROVAL")
+	} else if session.Info.IsWorking {
+		workStatus := session.Info.WorkingStatus
+		if workStatus == "" {
+			workStatus = "working"
+		}
+		status = statusWorking.Render(workStatus)
+	} else {
+		status = statusIdle.Render("idle")
+	}
+	lines = append(lines, m.detailLine("Status", status, width))
+
+	lines = append(lines, "")
+
+	// Model info
+	if session.Info.Model != "" {
+		lines = append(lines, m.detailLine("Model", session.Info.Model, width))
+	}
+	if session.Info.ContextSize != "" {
+		lines = append(lines, m.detailLine("Context", session.Info.ContextSize, width))
+	}
+
+	lines = append(lines, "")
+
+	// Git info
+	if session.Info.GitBranch != "" {
+		gitInfo := session.Info.GitBranch
+		if session.Info.GitChanges != "" {
+			gitInfo += " " + session.Info.GitChanges
+		}
+		lines = append(lines, m.detailLine("Git", gitInfo, width))
+	}
+
+	// CWD
+	if session.CWD != "" && session.CWD != "unknown" {
+		cwd := session.CWD
+		if strings.HasPrefix(cwd, "/Users/") {
+			parts := strings.SplitN(cwd, "/", 4)
+			if len(parts) >= 4 {
+				cwd = "~/" + parts[3]
+			}
+		}
+		if len(cwd) > width-12 {
+			cwd = "..." + cwd[len(cwd)-(width-15):]
+		}
+		lines = append(lines, m.detailLine("Dir", cwd, width))
+	}
+
+	// Time info
+	if session.Info.SessionTime != "" {
+		lines = append(lines, m.detailLine("Session", session.Info.SessionTime, width))
+	}
+	if session.Info.BlockTime != "" {
+		lines = append(lines, m.detailLine("Block", session.Info.BlockTime, width))
+	}
+
+	// Request preview (if waiting)
+	if session.PromptType != detector.PromptUnknown {
+		lines = append(lines, "")
+		lines = append(lines, dividerStyle.Render(strings.Repeat("─", width)))
+		lines = append(lines, "")
+
+		promptType := strings.ToUpper(string(session.PromptType))
+		lines = append(lines, statusWaiting.Render(fmt.Sprintf("  %s REQUEST", promptType)))
+		lines = append(lines, "")
+
+		// Raw content preview
+		previewLines := strings.Split(session.RawContent, "\n")
+		maxPreview := height - len(lines) - 2
+		if maxPreview > 10 {
+			maxPreview = 10
+		}
+		if len(previewLines) > maxPreview {
+			previewLines = previewLines[len(previewLines)-maxPreview:]
+		}
+
+		for _, line := range previewLines {
+			if len(line) > width-2 {
+				line = line[:width-5] + "..."
+			}
+			lines = append(lines, previewStyle.Render("  "+line))
+		}
+	}
+
+	return lipgloss.JoinVertical(lipgloss.Left, lines...)
+}
+
+func (m Model) detailLine(label, value string, width int) string {
+	labelStr := detailLabelStyle.Render(fmt.Sprintf("  %-10s", label))
+	valueStr := detailValueStyle.Render(value)
+	return labelStr + valueStr
+}
+
+func (m Model) renderHelpBar(width int) string {
+	waiting := m.getWaitingSessions()
+
+	var items []string
+
+	if len(waiting) > 0 {
+		items = append(items, helpKeyStyle.Render("[1-9]")+" approve  "+helpKeyStyle.Render("[!-)]")+" always")
+	}
+	items = append(items, helpKeyStyle.Render("[a]")+"pprove")
+	items = append(items, helpKeyStyle.Render("[s]")+" always")
+	items = append(items, helpKeyStyle.Render("[d]")+"eny")
+	items = append(items, helpKeyStyle.Render("[p]")+"review")
+	items = append(items, helpKeyStyle.Render("[t]")+"oggle auto")
+	items = append(items, helpKeyStyle.Render("[l]")+"og")
+	items = append(items, helpKeyStyle.Render("[q]")+"uit")
+
+	help := strings.Join(items, "  ")
+
+	return helpStyle.Render(help)
+}
