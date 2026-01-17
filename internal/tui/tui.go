@@ -158,6 +158,7 @@ type keyMap struct {
 	Deny          key.Binding
 	Refresh       key.Binding
 	ToggleAuto    key.Binding
+	ToggleView    key.Binding
 	ViewLog       key.Binding
 	Preview       key.Binding
 	Quit          key.Binding
@@ -191,6 +192,10 @@ var keys = keyMap{
 	ToggleAuto: key.NewBinding(
 		key.WithKeys("t"),
 		key.WithHelp("t", "toggle auto"),
+	),
+	ToggleView: key.NewBinding(
+		key.WithKeys("v"),
+		key.WithHelp("v", "view mode"),
 	),
 	ViewLog: key.NewBinding(
 		key.WithKeys("l"),
@@ -314,11 +319,15 @@ type Model struct {
 
 	// Auto-approve per session (mode)
 	autoApprove map[string]AutoMode
+	// Track pending approvals to prevent double-sending
+	pendingApproval map[string]time.Time
 	// Log viewing
 	showLog  bool
 	logLines []string
 	// Expanded preview mode
 	showPreview bool
+	// View mode (compact/expanded)
+	viewMode ViewMode
 }
 
 // LogEntry represents an auto-approval log entry
@@ -336,12 +345,13 @@ func New(refreshRate time.Duration) Model {
 	s.Style = lipgloss.NewStyle().Foreground(colorAccent)
 
 	return Model{
-		spinner:     s,
-		refreshRate: refreshRate,
-		lastRefresh: time.Now(),
-		width:       120,
-		height:      40,
-		autoApprove: make(map[string]AutoMode),
+		spinner:         s,
+		refreshRate:     refreshRate,
+		lastRefresh:     time.Now(),
+		width:           120,
+		height:          40,
+		autoApprove:     make(map[string]AutoMode),
+		pendingApproval: make(map[string]time.Time),
 	}
 }
 
@@ -562,6 +572,12 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			if m.cursor < len(m.sessions) {
 				m.showPreview = !m.showPreview
 			}
+
+		case key.Matches(msg, keys.ToggleView):
+			// Cycle view mode
+			m.viewMode = m.viewMode.Next()
+			m.actionStatus = fmt.Sprintf("View: %s", m.viewMode.String())
+			m.actionTime = time.Now()
 		}
 
 	case tea.WindowSizeMsg:
@@ -575,6 +591,13 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			m.actionStatus = ""
 		}
 
+		// Clean up old pending approvals (older than 5 seconds)
+		for name, t := range m.pendingApproval {
+			if time.Since(t) > 5*time.Second {
+				delete(m.pendingApproval, name)
+			}
+		}
+
 		// Auto-approve any waiting sessions based on their mode
 		var cmds []tea.Cmd
 		for _, session := range m.sessions {
@@ -585,6 +608,13 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			mode := m.autoApprove[session.Session.Name]
 			if mode == AutoOff {
 				continue // Auto-approve disabled
+			}
+
+			// Check if we already sent an approval recently (debounce)
+			if lastApproval, exists := m.pendingApproval[session.Session.Name]; exists {
+				if time.Since(lastApproval) < 3*time.Second {
+					continue // Already approved recently, wait for it to process
+				}
 			}
 
 			// Check if we should approve based on mode
@@ -606,6 +636,7 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			if shouldApprove {
 				writeLog(session.Session.Name, string(session.PromptType), session.Request)
 				cmds = append(cmds, approveSession(session.Session.Name))
+				m.pendingApproval[session.Session.Name] = time.Now()
 				m.actionStatus = fmt.Sprintf("AUTO: %s", session.Session.Name)
 				m.actionTime = time.Now()
 			} else if skipReason != "" {
@@ -924,60 +955,28 @@ func (m Model) renderMainContent(width, height int) string {
 	return lipgloss.JoinVertical(lipgloss.Left, tablePanel, detailPanel)
 }
 
-// Column widths for perfect alignment (inner content width, not including separators)
-const (
-	colNum    = 3  // "1." or "  "
-	colName   = 18 // session name
-	colStatus = 8  // WAITING/idle/working
-	colModel  = 9  // Opus 4.5
-	colCtx    = 6  // progress bar
-	colGit    = 14 // branch (+x,-y)
-	colDir    = 25 // directory (fixed width now)
-	// colReq takes remaining space
-)
-
-// Column separator
-const colSep = " │ "
-
 func (m Model) renderSessionTable(width, height int) string {
-	title := panelTitleStyle.Render("SESSIONS")
-
-	// Calculate request column width (takes remaining space)
-	// Total separators: 7 (between 8 columns)
-	sepWidth := len(colSep) * 7
-	fixedWidth := colNum + colName + colStatus + colModel + colCtx + colGit + colDir + sepWidth + 4 // +4 for padding
-	colReq := width - fixedWidth
-	if colReq < 20 {
-		colReq = 20
+	// Get view mode indicator for title
+	viewIndicator := ""
+	if m.viewMode == ViewExpanded {
+		viewIndicator = " [Expanded]"
 	}
+	title := panelTitleStyle.Render("SESSIONS" + viewIndicator)
 
-	// Build header with visible separators
+	// Get visible columns based on terminal width
+	columns := GetVisibleColumns(width - 4) // -4 for panel padding
+
+	// Build header
 	sepStyle := lipgloss.NewStyle().Foreground(colorBorder)
 	headerTextStyle := lipgloss.NewStyle().Foreground(colorTextDim).Bold(true)
 
-	headerCells := []string{
-		headerTextStyle.Width(colNum).Render("#"),
-		headerTextStyle.Width(colName).Render("SESSION"),
-		headerTextStyle.Width(colStatus).Render("STATUS"),
-		headerTextStyle.Width(colModel).Render("MODEL"),
-		headerTextStyle.Width(colCtx).Render("CTX"),
-		headerTextStyle.Width(colGit).Render("GIT"),
-		headerTextStyle.Width(colDir).Render("DIRECTORY"),
-		headerTextStyle.Width(colReq).Render("REQUEST"),
+	var headerCells []string
+	var divParts []string
+	for _, col := range columns {
+		headerCells = append(headerCells, headerTextStyle.Width(col.Width).Render(col.Header))
+		divParts = append(divParts, strings.Repeat("─", col.Width))
 	}
-	headerLine := " " + strings.Join(headerCells, sepStyle.Render(colSep))
-
-	// Divider with column breaks
-	divParts := []string{
-		strings.Repeat("─", colNum),
-		strings.Repeat("─", colName),
-		strings.Repeat("─", colStatus),
-		strings.Repeat("─", colModel),
-		strings.Repeat("─", colCtx),
-		strings.Repeat("─", colGit),
-		strings.Repeat("─", colDir),
-		strings.Repeat("─", colReq),
-	}
+	headerLine := " " + strings.Join(headerCells, sepStyle.Render(ColumnSeparator))
 	divider := dividerStyle.Render(" " + strings.Join(divParts, "─┼─"))
 
 	var lines []string
@@ -987,8 +986,8 @@ func (m Model) renderSessionTable(width, height int) string {
 	waitingNum := 1
 	for i, session := range m.sessions {
 		isSelected := i == m.cursor
-		line := m.renderTableRow(session, isSelected, waitingNum, width-4, i, colReq)
-		lines = append(lines, line)
+		rowLines := m.renderTableRow(session, isSelected, waitingNum, width-4, i, columns)
+		lines = append(lines, rowLines...)
 
 		if session.PromptType != detector.PromptUnknown {
 			waitingNum++
@@ -1017,114 +1016,9 @@ func (m Model) renderSessionTable(width, height int) string {
 	return panel
 }
 
-func (m Model) renderTableRow(session detector.WaitingSession, selected bool, waitingNum int, width int, rowIndex int, colReq int) string {
+func (m Model) renderTableRow(session detector.WaitingSession, selected bool, waitingNum int, width int, rowIndex int, columns []ColumnDef) []string {
 	isWaiting := session.PromptType != detector.PromptUnknown
 	sepStyle := lipgloss.NewStyle().Foreground(colorBorder)
-
-	// NUM column - "1." for waiting, empty for others
-	var numText string
-	var numStyle lipgloss.Style
-	if isWaiting {
-		numText = fmt.Sprintf("%d.", waitingNum)
-		numStyle = statusWaiting.Bold(true)
-	} else {
-		numText = ""
-		numStyle = statusIdle
-	}
-
-	// SESSION NAME
-	name := session.Session.Name
-	if len(name) > colName {
-		name = name[:colName-3] + "..."
-	}
-
-	// STATUS with indicator - show auto mode if enabled
-	autoMode := m.autoApprove[session.Session.Name]
-	var statusText string
-	var statusStyle lipgloss.Style
-	if autoMode != AutoOff {
-		// Show auto mode: SAFE or ALL
-		statusText = autoMode.String()
-		statusStyle = statusAuto
-	} else if isWaiting {
-		statusText = "WAITING"
-		statusStyle = statusWaiting
-	} else if session.Info.IsWorking {
-		statusText = session.Info.WorkingStatus
-		if statusText == "" {
-			statusText = "working"
-		}
-		if len(statusText) > colStatus {
-			statusText = statusText[:colStatus-3] + "..."
-		}
-		statusStyle = statusWorking
-	} else {
-		statusText = "idle"
-		statusStyle = statusIdle
-	}
-
-	// MODEL - trim and truncate
-	model := strings.TrimSpace(session.Info.Model)
-	if model == "" {
-		model = "-"
-	}
-	if len(model) > colModel {
-		model = model[:colModel]
-	}
-
-	// CTX - visual bar (already returns fixed width string)
-	ctxBar := renderContextBar(session.Info.ContextSize)
-
-	// GIT - trim, add changes, then truncate
-	git := strings.TrimSpace(session.Info.GitBranch)
-	if git == "" || git == "no" {
-		// "no" comes from "no git" - display as dash
-		git = "-"
-	} else {
-		// Add git changes if present
-		if changes := strings.TrimSpace(session.Info.GitChanges); changes != "" {
-			git = git + " " + changes
-		}
-		if len(git) > colGit {
-			git = git[:colGit-3] + "..."
-		}
-	}
-
-	// DIRECTORY - always shown
-	dir := session.CWD
-	if dir == "" || dir == "unknown" {
-		dir = "-"
-	} else {
-		if strings.HasPrefix(dir, "/Users/") {
-			parts := strings.SplitN(dir, "/", 4)
-			if len(parts) >= 4 {
-				dir = "~/" + parts[3]
-			}
-		}
-		if len(dir) > colDir {
-			dir = smartTruncate(dir, colDir)
-		}
-	}
-
-	// REQUEST - show for waiting sessions, dash for others
-	var req string
-	var reqStyle lipgloss.Style
-	if isWaiting {
-		req = session.Request
-		if req == "" {
-			req = string(session.PromptType) + " request"
-		}
-		// Clean up the request text
-		req = strings.ReplaceAll(req, "\n", " ")
-		req = strings.TrimSpace(req)
-		if len(req) > colReq {
-			req = req[:colReq-3] + "..."
-		}
-		reqStyle = statusWaiting
-	} else {
-		req = "-"
-		reqStyle = statusIdle
-	}
 
 	// Determine row background
 	var rowBg lipgloss.Color
@@ -1141,20 +1035,31 @@ func (m Model) renderTableRow(session detector.WaitingSession, selected bool, wa
 		return s.Background(rowBg)
 	}
 
-	// Build row cells - apply row background to each cell
-	cells := []string{
-		withBg(numStyle).Width(colNum).Render(numText),
-		withBg(sessionNameStyle).Width(colName).Render(name),
-		withBg(statusStyle).Width(colStatus).Render(statusText),
-		withBg(detailLabelStyle).Width(colModel).Render(model),
-		withBg(lipgloss.NewStyle()).Width(colCtx).Render(ctxBar),
-		withBg(detailLabelStyle).Width(colGit).Render(git),
-		withBg(detailLabelStyle).Width(colDir).Render(dir),
-		withBg(reqStyle).Width(colReq).Render(req),
+	// Prepare all column values
+	values := m.getColumnValues(session, isWaiting, waitingNum, columns)
+
+	// Build cells for visible columns only
+	var cells []string
+	for _, col := range columns {
+		cv := values[col.ID]
+		val := cv.Text
+		style := cv.Style
+		// In compact mode, truncate request in the row
+		if col.ID == ColRequest && m.viewMode == ViewCompact {
+			if len(val) > col.Width && col.Width > 3 {
+				val = val[:col.Width-3] + "..."
+			}
+		}
+		// In expanded mode, show "-" for request in the main row (we show it on line 2)
+		if col.ID == ColRequest && m.viewMode == ViewExpanded && isWaiting {
+			val = "(see below)"
+			style = detailLabelStyle
+		}
+		cells = append(cells, withBg(style).Width(col.Width).Render(val))
 	}
 
 	// Separator with background
-	sep := withBg(sepStyle).Render(colSep)
+	sep := withBg(sepStyle).Render(ColumnSeparator)
 	row := strings.Join(cells, sep)
 
 	// Add selection indicator or space prefix
@@ -1165,44 +1070,73 @@ func (m Model) renderTableRow(session detector.WaitingSession, selected bool, wa
 		row = withBg(lipgloss.NewStyle()).Render(" ") + row
 	}
 
-	return row
+	result := []string{row}
+
+	// In expanded view, add a second line for the request
+	if m.viewMode == ViewExpanded && isWaiting {
+		req := session.Request
+		if req == "" {
+			req = string(session.PromptType) + " request"
+		}
+		req = strings.ReplaceAll(req, "\n", " ")
+		req = strings.TrimSpace(req)
+
+		// Calculate max width for request line (full row width minus some padding)
+		maxReqWidth := width - 6
+		if len(req) > maxReqWidth && maxReqWidth > 3 {
+			req = req[:maxReqWidth-3] + "..."
+		}
+
+		// Render request line with same background
+		reqLine := withBg(lipgloss.NewStyle()).Render("  ") +
+			withBg(statusWaiting).Render("└─ " + req)
+
+		// Pad to full width
+		if lipgloss.Width(reqLine) < width {
+			padding := width - lipgloss.Width(reqLine)
+			reqLine = reqLine + withBg(lipgloss.NewStyle()).Render(strings.Repeat(" ", padding))
+		}
+
+		result = append(result, reqLine)
+	}
+
+	return result
 }
 
-func (m Model) renderSessionRow(session detector.WaitingSession, selected bool, waitingNum int, width int, rowIndex int) string {
-	isWaiting := session.PromptType != detector.PromptUnknown
+// ColumnValue holds the text and style for a column cell
+type ColumnValue struct {
+	Text  string
+	Style lipgloss.Style
+}
 
-	// Prefix column (3 chars)
-	var prefix string
+// getColumnValues returns the display value and style for each column
+func (m Model) getColumnValues(session detector.WaitingSession, isWaiting bool, waitingNum int, columns []ColumnDef) map[Column]ColumnValue {
+	values := make(map[Column]ColumnValue)
+
+	// NUM
 	if isWaiting {
-		prefix = fmt.Sprintf("%d.", waitingNum)
+		values[ColNum] = ColumnValue{fmt.Sprintf("%d.", waitingNum), statusWaiting.Bold(true)}
 	} else {
-		prefix = "  "
+		values[ColNum] = ColumnValue{"", statusIdle}
 	}
 
-	// Status indicator (1 char)
-	var indicator string
-	var indicatorStyle lipgloss.Style
-	if isWaiting {
-		indicator = ""
-		indicatorStyle = statusWaiting
-	} else if session.Info.IsWorking {
-		indicator = ""
-		indicatorStyle = statusWorking
-	} else {
-		indicator = ""
-		indicatorStyle = statusIdle
-	}
-
-	// Session name (20 chars)
+	// NAME
 	name := session.Session.Name
-	if len(name) > 18 {
-		name = name[:15] + "..."
+	nameWidth := GetColumnWidth(columns, ColName)
+	if nameWidth > 0 && len(name) > nameWidth {
+		name = name[:nameWidth-3] + "..."
 	}
+	values[ColName] = ColumnValue{name, sessionNameStyle}
 
-	// Status (10 chars)
+	// STATUS
+	autoMode := m.autoApprove[session.Session.Name]
 	var statusText string
 	var statusStyle lipgloss.Style
-	if isWaiting {
+	statusWidth := GetColumnWidth(columns, ColStatus)
+	if autoMode != AutoOff {
+		statusText = autoMode.String()
+		statusStyle = statusAuto
+	} else if isWaiting {
 		statusText = "WAITING"
 		statusStyle = statusWaiting
 	} else if session.Info.IsWorking {
@@ -1210,86 +1144,91 @@ func (m Model) renderSessionRow(session detector.WaitingSession, selected bool, 
 		if statusText == "" {
 			statusText = "working"
 		}
-		if len(statusText) > 10 {
-			statusText = statusText[:7] + "..."
+		if statusWidth > 0 && len(statusText) > statusWidth {
+			statusText = statusText[:statusWidth-3] + "..."
 		}
 		statusStyle = statusWorking
 	} else {
 		statusText = "idle"
 		statusStyle = statusIdle
 	}
+	values[ColStatus] = ColumnValue{statusText, statusStyle}
 
-	// Model (8 chars) - just show "Opus 4.5" or "Sonnet" etc
-	model := session.Info.Model
+	// MODEL
+	model := strings.TrimSpace(session.Info.Model)
 	if model == "" {
 		model = "-"
-	} else if len(model) > 8 {
-		model = model[:8]
 	}
+	modelWidth := GetColumnWidth(columns, ColModel)
+	if modelWidth > 0 && len(model) > modelWidth {
+		model = model[:modelWidth]
+	}
+	values[ColModel] = ColumnValue{model, detailLabelStyle}
 
-	// Context bar (8 chars) - visual progress bar!
-	ctxBar := renderContextBar(session.Info.ContextSize)
+	// CTX
+	ctxWidth := GetColumnWidth(columns, ColCtx)
+	values[ColCtx] = ColumnValue{renderContextBar(session.Info.ContextSize, ctxWidth), lipgloss.NewStyle()}
 
-	// Git (15 chars)
-	git := session.Info.GitBranch
-	if git == "" {
+	// GIT
+	git := strings.TrimSpace(session.Info.GitBranch)
+	if git == "" || git == "no" {
 		git = "-"
 	} else {
-		if session.Info.GitChanges != "" {
-			git += " " + session.Info.GitChanges
+		if changes := strings.TrimSpace(session.Info.GitChanges); changes != "" {
+			git = git + " " + changes
 		}
-		if len(git) > 15 {
-			git = git[:12] + "..."
+		gitWidth := GetColumnWidth(columns, ColGit)
+		if gitWidth > 0 && len(git) > gitWidth {
+			git = git[:gitWidth-3] + "..."
 		}
 	}
+	values[ColGit] = ColumnValue{git, detailLabelStyle}
 
-	// CWD (remaining) - smart middle truncation
-	cwd := session.CWD
-	if cwd == "" || cwd == "unknown" {
-		cwd = "-"
+	// DIR
+	dir := session.CWD
+	if dir == "" || dir == "unknown" {
+		dir = "-"
 	} else {
-		if strings.HasPrefix(cwd, "/Users/") {
-			parts := strings.SplitN(cwd, "/", 4)
+		if strings.HasPrefix(dir, "/Users/") {
+			parts := strings.SplitN(dir, "/", 4)
 			if len(parts) >= 4 {
-				cwd = "~/" + parts[3]
+				dir = "~/" + parts[3]
 			}
 		}
-		cwdWidth := width - 75
-		if cwdWidth < 15 {
-			cwdWidth = 15
-		}
-		if len(cwd) > cwdWidth {
-			// Smart middle truncation: ~/repos/.../filename
-			cwd = smartTruncate(cwd, cwdWidth)
+		dirWidth := GetColumnWidth(columns, ColDir)
+		if dirWidth > 0 && len(dir) > dirWidth {
+			dir = smartTruncate(dir, dirWidth)
 		}
 	}
+	values[ColDir] = ColumnValue{dir, detailLabelStyle}
 
-	// Build the row with fixed columns
-	row := fmt.Sprintf(" %s %s %-18s  %-10s  %-8s  %s  %-15s  %s",
-		indicatorStyle.Render(prefix),
-		indicatorStyle.Render(indicator),
-		sessionNameStyle.Render(name),
-		statusStyle.Render(statusText),
-		detailLabelStyle.Render(model),
-		ctxBar,
-		detailLabelStyle.Render(git),
-		detailLabelStyle.Render(cwd),
-	)
-
-	// Zebra striping for unselected rows
-	if selected {
-		row = sessionSelectedStyle.Width(width).Render(row)
-	} else if rowIndex%2 == 1 {
-		row = lipgloss.NewStyle().Background(lipgloss.Color("#252840")).Width(width).Render(row)
+	// REQUEST
+	var req string
+	var reqStyle lipgloss.Style
+	if isWaiting {
+		req = session.Request
+		if req == "" {
+			req = string(session.PromptType) + " request"
+		}
+		req = strings.ReplaceAll(req, "\n", " ")
+		req = strings.TrimSpace(req)
+		reqStyle = statusWaiting
+	} else {
+		req = "-"
+		reqStyle = statusIdle
 	}
+	values[ColRequest] = ColumnValue{req, reqStyle}
 
-	return row
+	return values
 }
 
 // renderContextBar creates a visual progress bar for context size
-func renderContextBar(ctxSize string) string {
+func renderContextBar(ctxSize string, width int) string {
+	if width <= 0 {
+		width = 6 // default width
+	}
 	if ctxSize == "" {
-		return lipgloss.NewStyle().Foreground(colorTextDim).Width(colCtx).Render("-")
+		return lipgloss.NewStyle().Foreground(colorTextDim).Width(width).Render("-")
 	}
 
 	// Parse context size (e.g., "133.1k" -> 133100)
@@ -1309,14 +1248,13 @@ func renderContextBar(ctxSize string) string {
 		pct = 1.0
 	}
 
-	// Create bar (colCtx chars wide)
-	barWidth := colCtx
-	filled := int(pct * float64(barWidth))
-	if filled > barWidth {
-		filled = barWidth
+	// Create bar
+	filled := int(pct * float64(width))
+	if filled > width {
+		filled = width
 	}
 
-	bar := strings.Repeat("█", filled) + strings.Repeat("░", barWidth-filled)
+	bar := strings.Repeat("█", filled) + strings.Repeat("░", width-filled)
 
 	// Color based on usage
 	var barStyle lipgloss.Style
@@ -1328,7 +1266,7 @@ func renderContextBar(ctxSize string) string {
 		barStyle = lipgloss.NewStyle().Foreground(colorSuccess)
 	}
 
-	return barStyle.Width(colCtx).Render(bar)
+	return barStyle.Width(width).Render(bar)
 }
 
 // smartTruncate truncates from the middle, preserving start and end
@@ -1518,6 +1456,7 @@ func (m Model) renderHelpBar(width int) string {
 	items = append(items, helpKeyStyle.Render("[a]")+"pprove")
 	items = append(items, helpKeyStyle.Render("[s]")+" always")
 	items = append(items, helpKeyStyle.Render("[d]")+"eny")
+	items = append(items, helpKeyStyle.Render("[v]")+"iew")
 	items = append(items, helpKeyStyle.Render("[p]")+"review")
 	items = append(items, helpKeyStyle.Render("[t]")+"oggle auto")
 	items = append(items, helpKeyStyle.Render("[l]")+"og")
