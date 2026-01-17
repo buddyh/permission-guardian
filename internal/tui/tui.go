@@ -23,10 +23,11 @@ var (
 	// Base colors
 	colorBg        = lipgloss.Color("#1e2139")
 	colorSurface   = lipgloss.Color("#282c47")
-	colorBorder    = lipgloss.Color("#3e4356")
+	colorSelected  = lipgloss.Color("#3d4466") // More visible selection highlight
+	colorBorder    = lipgloss.Color("#5a6178") // Brighter separators
 	colorTextPri   = lipgloss.Color("#e8eaee")
-	colorTextSec   = lipgloss.Color("#9fa3b0")
-	colorTextDim   = lipgloss.Color("#5a5f72")
+	colorTextSec   = lipgloss.Color("#b8bcc8") // Brighter secondary text
+	colorTextDim   = lipgloss.Color("#8890a0") // Brighter dim text
 
 	// Semantic colors
 	colorSuccess   = lipgloss.Color("#5eead4") // Approved/healthy
@@ -76,8 +77,9 @@ var (
 			Bold(true)
 
 	sessionSelectedStyle = lipgloss.NewStyle().
-				Background(colorSurface).
-				Foreground(colorTextPri)
+				Background(colorSelected).
+				Foreground(colorTextPri).
+				Bold(true)
 
 	// Status styles
 	statusWaiting = lipgloss.NewStyle().
@@ -1124,25 +1126,43 @@ func (m Model) renderTableRow(session detector.WaitingSession, selected bool, wa
 		reqStyle = statusIdle
 	}
 
-	// Build row cells using lipgloss Width() for perfect alignment
-	cells := []string{
-		numStyle.Width(colNum).Render(numText),
-		sessionNameStyle.Width(colName).Render(name),
-		statusStyle.Width(colStatus).Render(statusText),
-		detailLabelStyle.Width(colModel).Render(model),
-		ctxBar, // Already 6 chars wide
-		detailLabelStyle.Width(colGit).Render(git),
-		detailLabelStyle.Width(colDir).Render(dir),
-		reqStyle.Width(colReq).Render(req),
+	// Determine row background
+	var rowBg lipgloss.Color
+	if selected {
+		rowBg = colorSelected
+	} else if rowIndex%2 == 1 {
+		rowBg = lipgloss.Color("#252840")
+	} else {
+		rowBg = colorBg
 	}
 
-	row := " " + strings.Join(cells, sepStyle.Render(colSep))
+	// Helper to apply background to a style
+	withBg := func(s lipgloss.Style) lipgloss.Style {
+		return s.Background(rowBg)
+	}
 
-	// Zebra striping and selection
+	// Build row cells - apply row background to each cell
+	cells := []string{
+		withBg(numStyle).Width(colNum).Render(numText),
+		withBg(sessionNameStyle).Width(colName).Render(name),
+		withBg(statusStyle).Width(colStatus).Render(statusText),
+		withBg(detailLabelStyle).Width(colModel).Render(model),
+		withBg(lipgloss.NewStyle()).Width(colCtx).Render(ctxBar),
+		withBg(detailLabelStyle).Width(colGit).Render(git),
+		withBg(detailLabelStyle).Width(colDir).Render(dir),
+		withBg(reqStyle).Width(colReq).Render(req),
+	}
+
+	// Separator with background
+	sep := withBg(sepStyle).Render(colSep)
+	row := strings.Join(cells, sep)
+
+	// Add selection indicator or space prefix
 	if selected {
-		row = sessionSelectedStyle.Width(width).Render(row)
-	} else if rowIndex%2 == 1 {
-		row = lipgloss.NewStyle().Background(lipgloss.Color("#252840")).Width(width).Render(row)
+		indicator := withBg(lipgloss.NewStyle()).Foreground(colorAccent).Bold(true).Render("▶")
+		row = indicator + row
+	} else {
+		row = withBg(lipgloss.NewStyle()).Render(" ") + row
 	}
 
 	return row
