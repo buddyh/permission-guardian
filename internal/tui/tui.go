@@ -8,6 +8,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/buddyh/permission-guardian/internal/db"
 	"github.com/buddyh/permission-guardian/internal/detector"
 	"github.com/buddyh/permission-guardian/internal/tmux"
 	"github.com/charmbracelet/bubbles/key"
@@ -339,6 +340,8 @@ type Model struct {
 	showPreview bool
 	// View mode (compact/expanded)
 	viewMode ViewMode
+	// Audit database
+	auditDB *db.DB
 }
 
 // LogEntry represents an auto-approval log entry
@@ -355,6 +358,9 @@ func New(refreshRate time.Duration) Model {
 	s.Spinner = spinner.Dot
 	s.Style = lipgloss.NewStyle().Foreground(colorAccent)
 
+	// Open audit database (non-fatal if it fails)
+	auditDB, _ := db.Open()
+
 	return Model{
 		spinner:         s,
 		refreshRate:     refreshRate,
@@ -367,6 +373,7 @@ func New(refreshRate time.Duration) Model {
 		taskStartTime:   make(map[string]time.Time),
 		taskApprovals:   make(map[string]int),
 		lastActiveTime:  make(map[string]time.Time),
+		auditDB:         auditDB,
 	}
 }
 
@@ -580,6 +587,18 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			if m.cursor < len(m.sessions) {
 				session := m.sessions[m.cursor]
 				if session.PromptType != detector.PromptUnknown {
+					if m.auditDB != nil {
+						m.auditDB.LogDecision(db.Decision{
+							Timestamp:  time.Now(),
+							Session:    session.Session.Name,
+							Decision:   "approved",
+							Mode:       "manual",
+							PromptType: string(session.PromptType),
+							Request:    session.Request,
+							ProjectDir: session.CWD,
+							GitBranch:  session.Info.GitBranch,
+						})
+					}
 					return m, approveSession(session.Session.Name)
 				}
 			}
@@ -588,6 +607,18 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			if m.cursor < len(m.sessions) {
 				session := m.sessions[m.cursor]
 				if session.PromptType != detector.PromptUnknown {
+					if m.auditDB != nil {
+						m.auditDB.LogDecision(db.Decision{
+							Timestamp:  time.Now(),
+							Session:    session.Session.Name,
+							Decision:   "approved_always",
+							Mode:       "manual",
+							PromptType: string(session.PromptType),
+							Request:    session.Request,
+							ProjectDir: session.CWD,
+							GitBranch:  session.Info.GitBranch,
+						})
+					}
 					return m, approveSessionAlways(session.Session.Name)
 				}
 			}
@@ -596,6 +627,18 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			if m.cursor < len(m.sessions) {
 				session := m.sessions[m.cursor]
 				if session.PromptType != detector.PromptUnknown {
+					if m.auditDB != nil {
+						m.auditDB.LogDecision(db.Decision{
+							Timestamp:  time.Now(),
+							Session:    session.Session.Name,
+							Decision:   "denied",
+							Mode:       "manual",
+							PromptType: string(session.PromptType),
+							Request:    session.Request,
+							ProjectDir: session.CWD,
+							GitBranch:  session.Info.GitBranch,
+						})
+					}
 					return m, denySession(session.Session.Name)
 				}
 			}
@@ -713,6 +756,16 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 						duration := lastActive.Sub(startTime)
 						approvals := m.taskApprovals[name]
 						writeTaskLog(name, duration, approvals)
+						// Log to SQLite
+						if m.auditDB != nil {
+							m.auditDB.LogTaskRun(db.TaskRun{
+								StartTime: startTime,
+								EndTime:   lastActive,
+								Session:   name,
+								Duration:  duration,
+								Approvals: approvals,
+							})
+						}
 						// Clean up
 						delete(m.taskStartTime, name)
 						delete(m.taskApprovals, name)
@@ -787,6 +840,23 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 
 			if shouldApprove {
 				writeLog(session.Session.Name, string(session.PromptType), session.Request)
+				// Log to SQLite audit database
+				if m.auditDB != nil {
+					modeStr := mode.String()
+					if m.burstMode[session.Session.Name] {
+						modeStr += "+BURST"
+					}
+					m.auditDB.LogDecision(db.Decision{
+						Timestamp:  time.Now(),
+						Session:    session.Session.Name,
+						Decision:   "auto_approved",
+						Mode:       modeStr,
+						PromptType: string(session.PromptType),
+						Request:    session.Request,
+						ProjectDir: session.CWD,
+						GitBranch:  session.Info.GitBranch,
+					})
+				}
 				cmds = append(cmds, approveSession(session.Session.Name))
 				m.pendingApproval[session.Session.Name] = time.Now()
 				// Increment task approval counter
@@ -799,6 +869,19 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				}
 				m.actionTime = time.Now()
 			} else if skipReason != "" {
+				// Log skipped decisions too
+				if m.auditDB != nil {
+					m.auditDB.LogDecision(db.Decision{
+						Timestamp:  time.Now(),
+						Session:    session.Session.Name,
+						Decision:   "auto_skipped",
+						Mode:       mode.String(),
+						PromptType: string(session.PromptType),
+						Request:    session.Request,
+						ProjectDir: session.CWD,
+						GitBranch:  session.Info.GitBranch,
+					})
+				}
 				m.actionStatus = fmt.Sprintf("SKIP (%s): %s", skipReason, session.Session.Name)
 				m.actionTime = time.Now()
 			}
