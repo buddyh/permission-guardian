@@ -346,16 +346,23 @@ func ExtractSessionInfo(content string) SessionInfo {
 		}
 	}
 
-	// Working status detection - look for "✽ Something..." with "(ctrl+c to interrupt)"
-	if ctrlCPattern.MatchString(content) {
+	// Working status detection - only check last 15 lines for current status
+	// (avoid matching old "ctrl+c to interrupt" text in scrollback)
+	lastLines := lines
+	if len(lines) > 15 {
+		lastLines = lines[len(lines)-15:]
+	}
+	recentContent := strings.Join(lastLines, "\n")
+
+	if ctrlCPattern.MatchString(recentContent) {
 		info.IsWorking = true
-		if match := workingPattern.FindStringSubmatch(content); len(match) > 1 {
+		if match := workingPattern.FindStringSubmatch(recentContent); len(match) > 1 {
 			info.WorkingStatus = match[1]
 		}
 	}
 
 	// Compacting status detection - "· Compacting conversation…"
-	if match := compactingPattern.FindStringSubmatch(content); len(match) > 1 {
+	if match := compactingPattern.FindStringSubmatch(recentContent); len(match) > 1 {
 		info.IsWorking = true
 		info.WorkingStatus = match[1]
 	}

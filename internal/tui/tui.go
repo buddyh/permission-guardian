@@ -158,6 +158,7 @@ type keyMap struct {
 	Deny          key.Binding
 	Refresh       key.Binding
 	ToggleAuto    key.Binding
+	ToggleBurst   key.Binding
 	ToggleView    key.Binding
 	ViewLog       key.Binding
 	Preview       key.Binding
@@ -192,6 +193,10 @@ var keys = keyMap{
 	ToggleAuto: key.NewBinding(
 		key.WithKeys("t"),
 		key.WithHelp("t", "toggle auto"),
+	),
+	ToggleBurst: key.NewBinding(
+		key.WithKeys("b"),
+		key.WithHelp("b", "burst mode"),
 	),
 	ToggleView: key.NewBinding(
 		key.WithKeys("v"),
@@ -319,6 +324,8 @@ type Model struct {
 
 	// Auto-approve per session (mode)
 	autoApprove map[string]AutoMode
+	// Burst mode per session - auto-approve until idle
+	burstMode map[string]bool
 	// Track pending approvals to prevent double-sending
 	pendingApproval map[string]time.Time
 	// Log viewing
@@ -351,6 +358,7 @@ func New(refreshRate time.Duration) Model {
 		width:           120,
 		height:          40,
 		autoApprove:     make(map[string]AutoMode),
+		burstMode:       make(map[string]bool),
 		pendingApproval: make(map[string]time.Time),
 	}
 }
@@ -550,6 +558,10 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				currentMode := m.autoApprove[name]
 				newMode := currentMode.Next()
 				m.autoApprove[name] = newMode
+				// Turning off auto also turns off burst
+				if newMode == AutoOff {
+					delete(m.burstMode, name)
+				}
 
 				switch newMode {
 				case AutoOff:
@@ -558,6 +570,29 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 					m.actionStatus = fmt.Sprintf("AUTO SAFE: %s (skip destructive)", name)
 				case AutoAll:
 					m.actionStatus = fmt.Sprintf("AUTO ALL: %s (approve everything)", name)
+				}
+				m.actionTime = time.Now()
+			}
+
+		case key.Matches(msg, keys.ToggleBurst):
+			// Toggle burst mode for selected session (requires SAFE or ALL mode)
+			if m.cursor < len(m.sessions) {
+				name := m.sessions[m.cursor].Session.Name
+				mode := m.autoApprove[name]
+
+				if mode == AutoOff {
+					// Can't enable burst without an auto mode - enable SAFE+burst
+					m.autoApprove[name] = AutoSafe
+					m.burstMode[name] = true
+					m.actionStatus = fmt.Sprintf("BURST SAFE: %s (until idle)", name)
+				} else if m.burstMode[name] {
+					// Turn off burst
+					delete(m.burstMode, name)
+					m.actionStatus = fmt.Sprintf("BURST OFF: %s (still %s)", name, mode.String())
+				} else {
+					// Turn on burst
+					m.burstMode[name] = true
+					m.actionStatus = fmt.Sprintf("BURST %s: %s (until idle)", mode.String(), name)
 				}
 				m.actionTime = time.Now()
 			}
@@ -595,6 +630,31 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		for name, t := range m.pendingApproval {
 			if time.Since(t) > 5*time.Second {
 				delete(m.pendingApproval, name)
+			}
+		}
+
+		// Check for burst mode sessions that have gone idle
+		// Build a map of current session states for quick lookup
+		sessionStates := make(map[string]detector.WaitingSession)
+		for _, s := range m.sessions {
+			sessionStates[s.Session.Name] = s
+		}
+
+		// Disable burst for idle sessions (not working AND not waiting for approval)
+		for name := range m.burstMode {
+			if session, exists := sessionStates[name]; exists {
+				isIdle := !session.Info.IsWorking && session.PromptType == detector.PromptUnknown
+				if isIdle {
+					delete(m.burstMode, name)
+					// Also disable auto-approve when burst ends
+					delete(m.autoApprove, name)
+					m.actionStatus = fmt.Sprintf("BURST COMPLETE: %s (now idle)", name)
+					m.actionTime = time.Now()
+				}
+			} else {
+				// Session no longer exists, clean up
+				delete(m.burstMode, name)
+				delete(m.autoApprove, name)
 			}
 		}
 
@@ -637,7 +697,12 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				writeLog(session.Session.Name, string(session.PromptType), session.Request)
 				cmds = append(cmds, approveSession(session.Session.Name))
 				m.pendingApproval[session.Session.Name] = time.Now()
-				m.actionStatus = fmt.Sprintf("AUTO: %s", session.Session.Name)
+				// Show burst indicator in status if in burst mode
+				if m.burstMode[session.Session.Name] {
+					m.actionStatus = fmt.Sprintf("BURST: %s", session.Session.Name)
+				} else {
+					m.actionStatus = fmt.Sprintf("AUTO: %s", session.Session.Name)
+				}
 				m.actionTime = time.Now()
 			} else if skipReason != "" {
 				m.actionStatus = fmt.Sprintf("SKIP (%s): %s", skipReason, session.Session.Name)
@@ -1130,11 +1195,16 @@ func (m Model) getColumnValues(session detector.WaitingSession, isWaiting bool, 
 
 	// STATUS
 	autoMode := m.autoApprove[session.Session.Name]
+	isBurst := m.burstMode[session.Session.Name]
 	var statusText string
 	var statusStyle lipgloss.Style
 	statusWidth := GetColumnWidth(columns, ColStatus)
 	if autoMode != AutoOff {
-		statusText = autoMode.String()
+		if isBurst {
+			statusText = autoMode.String() + "+B"
+		} else {
+			statusText = autoMode.String()
+		}
 		statusStyle = statusAuto
 	} else if isWaiting {
 		statusText = "WAITING"
@@ -1459,6 +1529,7 @@ func (m Model) renderHelpBar(width int) string {
 	items = append(items, helpKeyStyle.Render("[v]")+"iew")
 	items = append(items, helpKeyStyle.Render("[p]")+"review")
 	items = append(items, helpKeyStyle.Render("[t]")+"oggle auto")
+	items = append(items, helpKeyStyle.Render("[b]")+"urst")
 	items = append(items, helpKeyStyle.Render("[l]")+"og")
 	items = append(items, helpKeyStyle.Render("[q]")+"uit")
 
