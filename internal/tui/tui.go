@@ -328,6 +328,10 @@ type Model struct {
 	burstMode map[string]bool
 	// Track pending approvals to prevent double-sending
 	pendingApproval map[string]time.Time
+	// Task timer tracking
+	taskStartTime  map[string]time.Time // When current task run started
+	taskApprovals  map[string]int       // Number of approvals in current task
+	lastActiveTime map[string]time.Time // Last time session was active (for idle grace period)
 	// Log viewing
 	showLog  bool
 	logLines []string
@@ -360,6 +364,9 @@ func New(refreshRate time.Duration) Model {
 		autoApprove:     make(map[string]AutoMode),
 		burstMode:       make(map[string]bool),
 		pendingApproval: make(map[string]time.Time),
+		taskStartTime:   make(map[string]time.Time),
+		taskApprovals:   make(map[string]int),
+		lastActiveTime:  make(map[string]time.Time),
 	}
 }
 
@@ -397,6 +404,51 @@ func writeLog(session string, promptType string, request string) error {
 	)
 	_, err = f.WriteString(entry)
 	return err
+}
+
+// taskLogFilePath returns the path to the task run log file
+func taskLogFilePath() string {
+	home, _ := os.UserHomeDir()
+	return filepath.Join(home, ".config", "permission-guardian", "tasks.log")
+}
+
+// writeTaskLog logs a completed task run
+func writeTaskLog(session string, duration time.Duration, approvals int) error {
+	path := taskLogFilePath()
+	// Ensure directory exists
+	if err := os.MkdirAll(filepath.Dir(path), 0755); err != nil {
+		return err
+	}
+
+	f, err := os.OpenFile(path, os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0644)
+	if err != nil {
+		return err
+	}
+	defer f.Close()
+
+	entry := fmt.Sprintf("%s | %s | duration=%s | approvals=%d\n",
+		time.Now().Format("2006-01-02 15:04:05"),
+		session,
+		formatDuration(duration),
+		approvals,
+	)
+	_, err = f.WriteString(entry)
+	return err
+}
+
+// formatDuration formats a duration as human-readable string
+func formatDuration(d time.Duration) string {
+	if d < time.Minute {
+		return fmt.Sprintf("%ds", int(d.Seconds()))
+	} else if d < time.Hour {
+		mins := int(d.Minutes())
+		secs := int(d.Seconds()) % 60
+		return fmt.Sprintf("%dm%ds", mins, secs)
+	} else {
+		hours := int(d.Hours())
+		mins := int(d.Minutes()) % 60
+		return fmt.Sprintf("%dh%dm", hours, mins)
+	}
 }
 
 // readLog reads the last N lines from the log file
@@ -633,13 +685,53 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			}
 		}
 
-		// Check for burst mode sessions that have gone idle
 		// Build a map of current session states for quick lookup
 		sessionStates := make(map[string]detector.WaitingSession)
 		for _, s := range m.sessions {
 			sessionStates[s.Session.Name] = s
 		}
 
+		// Task timer tracking - track active sessions and detect idle
+		const idleGracePeriod = 10 * time.Second
+		for _, session := range m.sessions {
+			name := session.Session.Name
+			isActive := session.Info.IsWorking || session.PromptType != detector.PromptUnknown
+
+			if isActive {
+				// Session is active - start timer if not started, update last active time
+				if _, exists := m.taskStartTime[name]; !exists {
+					m.taskStartTime[name] = time.Now()
+					m.taskApprovals[name] = 0
+				}
+				m.lastActiveTime[name] = time.Now()
+			} else {
+				// Session is idle - check if we should end the task
+				if startTime, exists := m.taskStartTime[name]; exists {
+					lastActive := m.lastActiveTime[name]
+					if time.Since(lastActive) > idleGracePeriod {
+						// Task run complete - log it
+						duration := lastActive.Sub(startTime)
+						approvals := m.taskApprovals[name]
+						writeTaskLog(name, duration, approvals)
+						// Clean up
+						delete(m.taskStartTime, name)
+						delete(m.taskApprovals, name)
+						delete(m.lastActiveTime, name)
+					}
+				}
+			}
+		}
+
+		// Clean up task tracking for sessions that no longer exist
+		for name := range m.taskStartTime {
+			if _, exists := sessionStates[name]; !exists {
+				delete(m.taskStartTime, name)
+				delete(m.taskApprovals, name)
+				delete(m.lastActiveTime, name)
+			}
+		}
+
+		// Check for burst mode sessions that have gone idle
 		// Disable burst for idle sessions (not working AND not waiting for approval)
 		for name := range m.burstMode {
 			if session, exists := sessionStates[name]; exists {
@@ -697,6 +789,8 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				writeLog(session.Session.Name, string(session.PromptType), session.Request)
 				cmds = append(cmds, approveSession(session.Session.Name))
 				m.pendingApproval[session.Session.Name] = time.Now()
+				// Increment task approval counter
+				m.taskApprovals[session.Session.Name]++
 				// Show burst indicator in status if in burst mode
 				if m.burstMode[session.Session.Name] {
 					m.actionStatus = fmt.Sprintf("BURST: %s", session.Session.Name)
@@ -1198,7 +1292,6 @@ func (m Model) getColumnValues(session detector.WaitingSession, isWaiting bool, 
 	isBurst := m.burstMode[session.Session.Name]
 	var statusText string
 	var statusStyle lipgloss.Style
-	statusWidth := GetColumnWidth(columns, ColStatus)
 	if autoMode != AutoOff {
 		if isBurst {
 			statusText = autoMode.String() + "+B"
@@ -1210,19 +1303,30 @@ func (m Model) getColumnValues(session detector.WaitingSession, isWaiting bool, 
 		statusText = "WAITING"
 		statusStyle = statusWaiting
 	} else if session.Info.IsWorking {
-		statusText = session.Info.WorkingStatus
-		if statusText == "" {
-			statusText = "working"
-		}
-		if statusWidth > 0 && len(statusText) > statusWidth {
-			statusText = statusText[:statusWidth-3] + "..."
-		}
+		statusText = "working"
 		statusStyle = statusWorking
 	} else {
 		statusText = "idle"
 		statusStyle = statusIdle
 	}
 	values[ColStatus] = ColumnValue{statusText, statusStyle}
+
+	// TIME - task duration
+	var timeText string
+	var timeStyle lipgloss.Style
+	if startTime, exists := m.taskStartTime[session.Session.Name]; exists {
+		duration := time.Since(startTime)
+		timeText = formatDuration(duration)
+		if duration > 30*time.Minute {
+			timeStyle = statusWaiting // Yellow for long-running
+		} else {
+			timeStyle = statusWorking // Purple for active
+		}
+	} else {
+		timeText = "-"
+		timeStyle = statusIdle
+	}
+	values[ColTime] = ColumnValue{timeText, timeStyle}
 
 	// MODEL
 	model := strings.TrimSpace(session.Info.Model)

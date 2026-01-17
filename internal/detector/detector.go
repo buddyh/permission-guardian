@@ -346,11 +346,12 @@ func ExtractSessionInfo(content string) SessionInfo {
 		}
 	}
 
-	// Working status detection - only check last 15 lines for current status
+	// Working status detection - only check last 30 lines for current status
 	// (avoid matching old "ctrl+c to interrupt" text in scrollback)
+	// Use 30 lines because todos can push the status line higher
 	lastLines := lines
-	if len(lines) > 15 {
-		lastLines = lines[len(lines)-15:]
+	if len(lines) > 30 {
+		lastLines = lines[len(lines)-30:]
 	}
 	recentContent := strings.Join(lastLines, "\n")
 

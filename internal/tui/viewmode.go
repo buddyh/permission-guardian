@@ -41,6 +41,7 @@ const (
 	ColNum Column = iota
 	ColName
 	ColStatus
+	ColTime
 	ColModel
 	ColCtx
 	ColGit
@@ -62,10 +63,11 @@ var DefaultColumns = []ColumnDef{
 	{ID: ColNum, Header: "#", Width: 3, MinWidth: 0, Priority: 0},
 	{ID: ColName, Header: "SESSION", Width: 18, MinWidth: 0, Priority: 1},
 	{ID: ColStatus, Header: "STATUS", Width: 8, MinWidth: 0, Priority: 2},
-	{ID: ColModel, Header: "MODEL", Width: 9, MinWidth: 100, Priority: 5},
-	{ID: ColCtx, Header: "CTX", Width: 6, MinWidth: 90, Priority: 6},
-	{ID: ColGit, Header: "GIT", Width: 14, MinWidth: 110, Priority: 4},
-	{ID: ColDir, Header: "DIRECTORY", Width: 25, MinWidth: 80, Priority: 3},
+	{ID: ColTime, Header: "TIME", Width: 7, MinWidth: 85, Priority: 3},
+	{ID: ColModel, Header: "MODEL", Width: 9, MinWidth: 100, Priority: 6},
+	{ID: ColCtx, Header: "CTX", Width: 6, MinWidth: 90, Priority: 7},
+	{ID: ColGit, Header: "GIT", Width: 14, MinWidth: 110, Priority: 5},
+	{ID: ColDir, Header: "DIRECTORY", Width: 25, MinWidth: 80, Priority: 4},
 	{ID: ColRequest, Header: "REQUEST", Width: 0, MinWidth: 0, Priority: 0}, // Flexible width
 }
 
