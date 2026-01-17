@@ -8,6 +8,7 @@ import (
 	"syscall"
 	"time"
 
+	"github.com/buddyh/permission-guardian/internal/db"
 	"github.com/buddyh/permission-guardian/internal/detector"
 	"github.com/buddyh/permission-guardian/internal/rules"
 	"github.com/buddyh/permission-guardian/internal/tmux"
@@ -44,6 +45,7 @@ Run 'pg watch' to start the live dashboard, or 'pg list' for a quick check.`,
 	rootCmd.AddCommand(newDenyCmd(&flags))
 	rootCmd.AddCommand(newAutoCmd(&flags))
 	rootCmd.AddCommand(newRulesCmd(&flags))
+	rootCmd.AddCommand(newLogCmd(&flags))
 
 	rootCmd.SetArgs(args)
 
@@ -674,4 +676,174 @@ func setRuleEnabled(configPath string, name string, enabled bool) error {
 	}
 	fmt.Printf("%s rule '%s'\n", action, name)
 	return nil
+}
+
+func newLogCmd(flags *rootFlags) *cobra.Command {
+	cmd := &cobra.Command{
+		Use:   "log",
+		Short: "View and search the audit log",
+		Long:  "View recent decisions, search the audit log, and see statistics.",
+	}
+
+	// Subcommand: log show (default, shows recent entries)
+	var limit int
+	var session string
+	showCmd := &cobra.Command{
+		Use:   "show",
+		Short: "Show recent log entries",
+		RunE: func(cmd *cobra.Command, args []string) error {
+			auditDB, err := db.Open()
+			if err != nil {
+				return fmt.Errorf("failed to open audit database: %w", err)
+			}
+			defer auditDB.Close()
+
+			var decisions []db.Decision
+			if session != "" {
+				decisions, err = auditDB.GetDecisionsBySession(session, limit)
+			} else {
+				decisions, err = auditDB.GetRecentDecisions(limit)
+			}
+			if err != nil {
+				return fmt.Errorf("failed to get decisions: %w", err)
+			}
+
+			if flags.asJSON {
+				enc := json.NewEncoder(os.Stdout)
+				enc.SetIndent("", "  ")
+				return enc.Encode(decisions)
+			}
+
+			if len(decisions) == 0 {
+				fmt.Println("No log entries found.")
+				return nil
+			}
+
+			fmt.Println("=== Recent Decisions ===")
+			fmt.Println()
+			for _, d := range decisions {
+				req := d.Request
+				if len(req) > 60 {
+					req = req[:57] + "..."
+				}
+				fmt.Printf("%s | %-12s | %-15s | %-10s | %s\n",
+					d.Timestamp.Format("2006-01-02 15:04"),
+					d.Decision,
+					d.Session,
+					d.PromptType,
+					req,
+				)
+			}
+			return nil
+		},
+	}
+	showCmd.Flags().IntVarP(&limit, "limit", "n", 20, "Number of entries to show")
+	showCmd.Flags().StringVarP(&session, "session", "s", "", "Filter by session name")
+
+	// Subcommand: log search
+	searchCmd := &cobra.Command{
+		Use:   "search [query]",
+		Short: "Search log entries",
+		Args:  cobra.ExactArgs(1),
+		RunE: func(cmd *cobra.Command, args []string) error {
+			query := args[0]
+
+			auditDB, err := db.Open()
+			if err != nil {
+				return fmt.Errorf("failed to open audit database: %w", err)
+			}
+			defer auditDB.Close()
+
+			decisions, err := auditDB.SearchDecisions(query, limit)
+			if err != nil {
+				return fmt.Errorf("failed to search decisions: %w", err)
+			}
+
+			if flags.asJSON {
+				enc := json.NewEncoder(os.Stdout)
+				enc.SetIndent("", "  ")
+				return enc.Encode(decisions)
+			}
+
+			if len(decisions) == 0 {
+				fmt.Printf("No entries matching '%s' found.\n", query)
+				return nil
+			}
+
+			fmt.Printf("=== Search Results for '%s' ===\n\n", query)
+			for _, d := range decisions {
+				req := d.Request
+				if len(req) > 60 {
+					req = req[:57] + "..."
+				}
+				fmt.Printf("%s | %-12s | %-15s | %-10s | %s\n",
+					d.Timestamp.Format("2006-01-02 15:04"),
+					d.Decision,
+					d.Session,
+					d.PromptType,
+					req,
+				)
+			}
+			return nil
+		},
+	}
+	searchCmd.Flags().IntVarP(&limit, "limit", "n", 50, "Maximum results")
+
+	// Subcommand: log stats
+	statsCmd := &cobra.Command{
+		Use:   "stats",
+		Short: "Show audit statistics",
+		RunE: func(cmd *cobra.Command, args []string) error {
+			auditDB, err := db.Open()
+			if err != nil {
+				return fmt.Errorf("failed to open audit database: %w", err)
+			}
+			defer auditDB.Close()
+
+			stats, err := auditDB.GetStats()
+			if err != nil {
+				return fmt.Errorf("failed to get stats: %w", err)
+			}
+
+			if flags.asJSON {
+				enc := json.NewEncoder(os.Stdout)
+				enc.SetIndent("", "  ")
+				return enc.Encode(stats)
+			}
+
+			fmt.Println("=== Audit Statistics ===")
+			fmt.Println()
+			fmt.Printf("Total decisions: %d\n", stats["total_decisions"])
+			fmt.Println()
+
+			if byDecision, ok := stats["by_decision"].(map[string]int); ok {
+				fmt.Println("By decision type:")
+				for decision, count := range byDecision {
+					fmt.Printf("  %-20s %d\n", decision, count)
+				}
+				fmt.Println()
+			}
+
+			if byMode, ok := stats["by_mode"].(map[string]int); ok {
+				fmt.Println("By mode:")
+				for mode, count := range byMode {
+					fmt.Printf("  %-20s %d\n", mode, count)
+				}
+				fmt.Println()
+			}
+
+			fmt.Printf("Task runs today: %d\n", stats["task_runs_today"])
+			if seconds, ok := stats["task_time_today_seconds"].(int64); ok {
+				hours := seconds / 3600
+				mins := (seconds % 3600) / 60
+				fmt.Printf("Task time today: %dh %dm\n", hours, mins)
+			}
+
+			return nil
+		},
+	}
+
+	cmd.AddCommand(showCmd, searchCmd, statsCmd)
+
+	return cmd
 }
