@@ -152,18 +152,19 @@ Monitor`
 // Key bindings
 // ═══════════════════════════════════════════════════════════════════════════
 type keyMap struct {
-	Up            key.Binding
-	Down          key.Binding
-	Approve       key.Binding
-	ApproveAlways key.Binding
-	Deny          key.Binding
-	Refresh       key.Binding
-	ToggleAuto    key.Binding
-	ToggleBurst   key.Binding
-	ToggleView    key.Binding
-	ViewLog       key.Binding
-	Preview       key.Binding
-	Quit          key.Binding
+	Up             key.Binding
+	Down           key.Binding
+	Approve        key.Binding
+	ApproveAlways  key.Binding
+	Deny           key.Binding
+	Refresh        key.Binding
+	ToggleAuto     key.Binding
+	ToggleAutoMode key.Binding
+	ToggleBurst    key.Binding
+	ToggleView     key.Binding
+	ViewLog        key.Binding
+	Preview        key.Binding
+	Quit           key.Binding
 }
 
 var keys = keyMap{
@@ -193,7 +194,11 @@ var keys = keyMap{
 	),
 	ToggleAuto: key.NewBinding(
 		key.WithKeys("t"),
-		key.WithHelp("t", "toggle auto"),
+		key.WithHelp("t", "auto on/off"),
+	),
+	ToggleAutoMode: key.NewBinding(
+		key.WithKeys("T", "m"),
+		key.WithHelp("T", "safe/all"),
 	),
 	ToggleBurst: key.NewBinding(
 		key.WithKeys("b"),
@@ -647,24 +652,39 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			return m, fetchSessions
 
 		case key.Matches(msg, keys.ToggleAuto):
-			// Cycle auto-approve mode for selected session: OFF -> SAFE -> ALL -> OFF
+			// Toggle auto-approve ON (SAFE) / OFF for selected session
 			if m.cursor < len(m.sessions) {
 				name := m.sessions[m.cursor].Session.Name
 				currentMode := m.autoApprove[name]
-				newMode := currentMode.Next()
-				m.autoApprove[name] = newMode
-				// Turning off auto also turns off burst
-				if newMode == AutoOff {
-					delete(m.burstMode, name)
-				}
 
-				switch newMode {
-				case AutoOff:
-					m.actionStatus = fmt.Sprintf("AUTO OFF: %s", name)
-				case AutoSafe:
+				if currentMode == AutoOff {
+					// Turn on with SAFE mode (safe default)
+					m.autoApprove[name] = AutoSafe
 					m.actionStatus = fmt.Sprintf("AUTO SAFE: %s (skip destructive)", name)
-				case AutoAll:
-					m.actionStatus = fmt.Sprintf("AUTO ALL: %s (approve everything)", name)
+				} else {
+					// Turn off
+					m.autoApprove[name] = AutoOff
+					delete(m.burstMode, name)
+					m.actionStatus = fmt.Sprintf("AUTO OFF: %s", name)
+				}
+				m.actionTime = time.Now()
+			}
+
+		case key.Matches(msg, keys.ToggleAutoMode):
+			// Switch between SAFE and ALL (only when auto is already on)
+			if m.cursor < len(m.sessions) {
+				name := m.sessions[m.cursor].Session.Name
+				currentMode := m.autoApprove[name]
+
+				if currentMode == AutoSafe {
+					m.autoApprove[name] = AutoAll
+					m.actionStatus = fmt.Sprintf("AUTO ALL: %s (approve everything!)", name)
+				} else if currentMode == AutoAll {
+					m.autoApprove[name] = AutoSafe
+					m.actionStatus = fmt.Sprintf("AUTO SAFE: %s (skip destructive)", name)
+				} else {
+					// Auto is off - inform user
+					m.actionStatus = fmt.Sprintf("Auto is OFF - press [t] first: %s", name)
 				}
 				m.actionTime = time.Now()
 			}
@@ -1715,7 +1735,8 @@ func (m Model) renderHelpBar(width int) string {
 	items = append(items, helpKeyStyle.Render("[d]")+"eny")
 	items = append(items, helpKeyStyle.Render("[v]")+"iew")
 	items = append(items, helpKeyStyle.Render("[p]")+"review")
-	items = append(items, helpKeyStyle.Render("[t]")+"oggle auto")
+	items = append(items, helpKeyStyle.Render("[t]")+" auto on/off")
+	items = append(items, helpKeyStyle.Render("[T]")+" safe/all")
 	items = append(items, helpKeyStyle.Render("[b]")+"urst")
 	items = append(items, helpKeyStyle.Render("[l]")+"og")
 	items = append(items, helpKeyStyle.Render("[q]")+"uit")
