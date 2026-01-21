@@ -972,11 +972,6 @@ func (m Model) View() string {
 		return m.renderLogView(width, height)
 	}
 
-	// If showing expanded preview, render preview view
-	if m.showPreview {
-		return m.renderPreviewView(width, height)
-	}
-
 	var sections []string
 
 	// Header with logo (8 lines)
@@ -985,13 +980,30 @@ func (m Model) View() string {
 	// Help bar (2 lines)
 	helpBar := m.renderHelpBar(width)
 
-	// Main content gets ALL remaining space - sessions are priority
-	// Header ~8 lines, help ~2 lines, leave rest for sessions
-	mainHeight := height - 10
-	if mainHeight < 5 {
-		mainHeight = 5
+	// Calculate available height for main content
+	// Header ~8 lines, help ~2 lines
+	availableHeight := height - 10
+	if availableHeight < 10 {
+		availableHeight = 10
 	}
-	sections = append(sections, m.renderMainContent(width, mainHeight))
+
+	if m.showPreview && m.cursor < len(m.sessions) {
+		// Split view: sessions on top (~40%), preview on bottom (~60%)
+		sessionsHeight := availableHeight * 2 / 5
+		if sessionsHeight < 6 {
+			sessionsHeight = 6
+		}
+		previewHeight := availableHeight - sessionsHeight
+
+		// Render compact sessions table (no detail panel)
+		sections = append(sections, m.renderSessionTable(width, sessionsHeight))
+
+		// Render preview panel below
+		sections = append(sections, m.renderSplitPreview(width, previewHeight))
+	} else {
+		// Normal view: full sessions with optional detail panel
+		sections = append(sections, m.renderMainContent(width, availableHeight))
+	}
 
 	sections = append(sections, helpBar)
 
@@ -1121,6 +1133,48 @@ func (m Model) renderPreviewView(width, height int) string {
 	}
 
 	return lipgloss.JoinVertical(lipgloss.Left, lines...)
+}
+
+func (m Model) renderSplitPreview(width, height int) string {
+	if m.cursor >= len(m.sessions) {
+		return ""
+	}
+
+	session := m.sessions[m.cursor]
+
+	// Title bar with session name and close hint
+	title := statusAccent.Render(fmt.Sprintf(" PREVIEW: %s ", session.Session.Name)) +
+		detailLabelStyle.Render("[p] close")
+
+	var lines []string
+	lines = append(lines, title)
+
+	// Use StyledContent if available (preserves ANSI colors)
+	contentToShow := session.StyledContent
+	if contentToShow == "" {
+		contentToShow = session.RawContent
+	}
+
+	rawLines := strings.Split(contentToShow, "\n")
+
+	// Calculate how many lines we can show
+	maxLines := height - 3 // Account for title and panel borders
+	if maxLines < 3 {
+		maxLines = 3
+	}
+
+	// Show the last N lines (most recent content)
+	if len(rawLines) > maxLines {
+		rawLines = rawLines[len(rawLines)-maxLines:]
+	}
+
+	for _, line := range rawLines {
+		lines = append(lines, "  "+line)
+	}
+
+	content := lipgloss.JoinVertical(lipgloss.Left, lines...)
+
+	return panelStyle.Width(width).Render(content)
 }
 
 func (m Model) renderHeader(width int) string {
