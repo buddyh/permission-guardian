@@ -579,13 +579,21 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			return m, tea.Quit
 
 		case key.Matches(msg, keys.Up):
-			if m.cursor > 0 {
-				m.cursor--
+			if len(m.sessions) > 0 {
+				if m.cursor > 0 {
+					m.cursor--
+				} else {
+					m.cursor = len(m.sessions) - 1 // Wrap to bottom
+				}
 			}
 
 		case key.Matches(msg, keys.Down):
-			if m.cursor < len(m.sessions)-1 {
-				m.cursor++
+			if len(m.sessions) > 0 {
+				if m.cursor < len(m.sessions)-1 {
+					m.cursor++
+				} else {
+					m.cursor = 0 // Wrap to top
+				}
 			}
 
 		case key.Matches(msg, keys.Approve):
