@@ -22,21 +22,21 @@ import (
 // ═══════════════════════════════════════════════════════════════════════════
 var (
 	// Base colors
-	colorBg        = lipgloss.Color("#1e2139")
-	colorSurface   = lipgloss.Color("#282c47")
-	colorSelected  = lipgloss.Color("#3d4466") // More visible selection highlight
-	colorBorder    = lipgloss.Color("#5a6178") // Brighter separators
-	colorTextPri   = lipgloss.Color("#e8eaee")
-	colorTextSec   = lipgloss.Color("#b8bcc8") // Brighter secondary text
-	colorTextDim   = lipgloss.Color("#8890a0") // Brighter dim text
+	colorBg       = lipgloss.Color("#1e2139")
+	colorSurface  = lipgloss.Color("#282c47")
+	colorSelected = lipgloss.Color("#3d4466") // More visible selection highlight
+	colorBorder   = lipgloss.Color("#5a6178") // Brighter separators
+	colorTextPri  = lipgloss.Color("#e8eaee")
+	colorTextSec  = lipgloss.Color("#b8bcc8") // Brighter secondary text
+	colorTextDim  = lipgloss.Color("#8890a0") // Brighter dim text
 
 	// Semantic colors
-	colorSuccess   = lipgloss.Color("#5eead4") // Approved/healthy
-	colorWarning   = lipgloss.Color("#fbbf24") // Waiting/pending
-	colorError     = lipgloss.Color("#ff6b6b") // Denied/error
-	colorActive    = lipgloss.Color("#a78bfa") // Working/active
-	colorInfo      = lipgloss.Color("#60a5fa") // Info/neutral
-	colorAccent    = lipgloss.Color("#f472b6") // Highlight/accent
+	colorSuccess = lipgloss.Color("#5eead4") // Approved/healthy
+	colorWarning = lipgloss.Color("#fbbf24") // Waiting/pending
+	colorError   = lipgloss.Color("#ff6b6b") // Denied/error
+	colorActive  = lipgloss.Color("#a78bfa") // Working/active
+	colorInfo    = lipgloss.Color("#60a5fa") // Info/neutral
+	colorAccent  = lipgloss.Color("#f472b6") // Highlight/accent
 )
 
 // ═══════════════════════════════════════════════════════════════════════════
@@ -74,8 +74,8 @@ var (
 
 	// Session list styles
 	sessionNameStyle = lipgloss.NewStyle().
-			Foreground(colorInfo).
-			Bold(true)
+				Foreground(colorInfo).
+				Bold(true)
 
 	sessionSelectedStyle = lipgloss.NewStyle().
 				Background(colorSelected).
@@ -104,15 +104,15 @@ var (
 			Bold(true)
 
 	statusAuto = lipgloss.NewStyle().
-		Foreground(colorSuccess).
-		Bold(true)
+			Foreground(colorSuccess).
+			Bold(true)
 
 	// Detail panel styles
 	detailLabelStyle = lipgloss.NewStyle().
-			Foreground(colorTextSec)
+				Foreground(colorTextSec)
 
 	detailValueStyle = lipgloss.NewStyle().
-			Foreground(colorTextPri)
+				Foreground(colorTextPri)
 
 	// Preview styles
 	previewStyle = lipgloss.NewStyle().
@@ -830,6 +830,11 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				continue // Not waiting
 			}
 
+			// Never auto-approve folder trust prompts - they're one-time security decisions
+			if session.PromptType == detector.PromptTrust {
+				continue
+			}
+
 			mode := m.autoApprove[session.Session.Name]
 			if mode == AutoOff {
 				continue // Auto-approve disabled
@@ -1351,7 +1356,7 @@ func (m Model) renderTableRow(session detector.WaitingSession, selected bool, wa
 
 		// Render request line with same background
 		reqLine := withBg(lipgloss.NewStyle()).Render("  ") +
-			withBg(statusWaiting).Render("└─ " + req)
+			withBg(statusWaiting).Render("└─ "+req)
 
 		// Pad to full width
 		if lipgloss.Width(reqLine) < width {

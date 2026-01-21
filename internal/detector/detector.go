@@ -20,6 +20,7 @@ const (
 	PromptWrite   PromptType = "write"
 	PromptMCP     PromptType = "mcp"
 	PromptTask    PromptType = "task"
+	PromptTrust   PromptType = "trust" // Folder trust prompt (not a tool permission)
 	PromptUnknown PromptType = "unknown"
 )
 
@@ -47,13 +48,13 @@ type SessionInfo struct {
 
 // WaitingSession represents a session waiting for permission approval
 type WaitingSession struct {
-	Session     tmux.Session
-	Agent       AgentType
-	PromptType  PromptType
-	Request     string
-	RawContent  string
-	CWD         string
-	Info        SessionInfo
+	Session    tmux.Session
+	Agent      AgentType
+	PromptType PromptType
+	Request    string
+	RawContent string
+	CWD        string
+	Info       SessionInfo
 }
 
 // Status represents the current status of a session
@@ -168,6 +169,12 @@ func HasPermissionPrompt(content string) bool {
 
 // DetectPromptType determines what type of permission is being requested
 func DetectPromptType(content string) PromptType {
+	// Check for folder trust prompt FIRST - it contains "bash commands" text
+	// that would otherwise trigger bash detection
+	if strings.Contains(content, "Do you trust the files in this folder") ||
+		strings.Contains(content, "trust files in this") {
+		return PromptTrust
+	}
 	if strings.Contains(content, "Bash command") || strings.Contains(content, "Bash(") {
 		return PromptBash
 	}
@@ -194,6 +201,8 @@ func ExtractRequest(content string, promptType PromptType) string {
 	lines := strings.Split(content, "\n")
 
 	switch promptType {
+	case PromptTrust:
+		return extractTrustRequest(lines)
 	case PromptBash:
 		return extractBashRequest(lines)
 	case PromptFetch:
@@ -205,6 +214,27 @@ func ExtractRequest(content string, promptType PromptType) string {
 	}
 
 	return extractFallbackRequest(lines)
+}
+
+func extractTrustRequest(lines []string) string {
+	// Extract the folder path from "Do you trust the files in this folder? /path/to/folder"
+	for _, line := range lines {
+		if strings.Contains(line, "Do you trust the files in this folder") {
+			// The path usually follows the question mark
+			if idx := strings.Index(line, "?"); idx != -1 {
+				path := strings.TrimSpace(line[idx+1:])
+				if path != "" {
+					return "Trust folder: " + path
+				}
+			}
+		}
+		// Also check for just the path line that follows
+		trimmed := strings.TrimSpace(line)
+		if strings.HasPrefix(trimmed, "/") && !strings.Contains(trimmed, " ") {
+			return "Trust folder: " + trimmed
+		}
+	}
+	return "Folder trust request"
 }
 
 func extractBashRequest(lines []string) string {
