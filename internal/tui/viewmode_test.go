@@ -41,11 +41,11 @@ func TestViewModeNext(t *testing.T) {
 
 func TestGetVisibleColumns(t *testing.T) {
 	tests := []struct {
-		name      string
-		width     int
-		wantMin   int // Minimum columns expected
-		wantMax   int // Maximum columns expected
-		mustHave  []Column
+		name        string
+		width       int
+		wantMin     int // Minimum columns expected
+		wantMax     int // Maximum columns expected
+		mustHave    []Column
 		mustNotHave []Column
 	}{
 		{
@@ -63,11 +63,11 @@ func TestGetVisibleColumns(t *testing.T) {
 			mustHave: []Column{ColNum, ColName, ColStatus, ColTime, ColDir, ColRequest},
 		},
 		{
-			name:     "narrow terminal",
-			width:    80,
-			wantMin:  4,
-			wantMax:  6,
-			mustHave: []Column{ColNum, ColName, ColStatus, ColRequest},
+			name:        "narrow terminal",
+			width:       80,
+			wantMin:     4,
+			wantMax:     6,
+			mustHave:    []Column{ColNum, ColName, ColStatus, ColRequest},
 			mustNotHave: []Column{ColCtx}, // Context bar should be hidden first
 		},
 		{

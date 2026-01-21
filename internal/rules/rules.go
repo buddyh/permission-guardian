@@ -13,12 +13,12 @@ import (
 
 // Rule defines a single auto-approval rule
 type Rule struct {
-	Name        string   `yaml:"name"`
-	Description string   `yaml:"description,omitempty"`
-	Enabled     bool     `yaml:"enabled"`
-	Match       Match    `yaml:"match"`
-	Action      string   `yaml:"action"` // "approve" or "deny"
-	Priority    int      `yaml:"priority,omitempty"`
+	Name        string `yaml:"name"`
+	Description string `yaml:"description,omitempty"`
+	Enabled     bool   `yaml:"enabled"`
+	Match       Match  `yaml:"match"`
+	Action      string `yaml:"action"` // "approve" or "deny"
+	Priority    int    `yaml:"priority,omitempty"`
 }
 
 // Match defines the conditions for a rule to apply
@@ -146,8 +146,8 @@ type MatchResult struct {
 
 // Matcher handles rule matching against sessions
 type Matcher struct {
-	config          *Config
-	compiledRules   []compiledRule
+	config        *Config
+	compiledRules []compiledRule
 }
 
 type compiledRule struct {
