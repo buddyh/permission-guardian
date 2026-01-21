@@ -1095,12 +1095,18 @@ func (m Model) renderPreviewView(width, height int) string {
 		lines = append(lines, dividerStyle.Render(strings.Repeat("─", width-4)))
 	}
 
-	// Raw content - show as much as fits
+	// Raw content - show as much as fits (with terminal styling preserved)
 	lines = append(lines, "")
-	lines = append(lines, detailLabelStyle.Render("  RAW PANE CONTENT:"))
+	lines = append(lines, detailLabelStyle.Render("  TERMINAL CONTENT:"))
 	lines = append(lines, "")
 
-	rawLines := strings.Split(session.RawContent, "\n")
+	// Use StyledContent if available (preserves ANSI colors), fall back to RawContent
+	contentToShow := session.StyledContent
+	if contentToShow == "" {
+		contentToShow = session.RawContent
+	}
+
+	rawLines := strings.Split(contentToShow, "\n")
 	maxRawLines := height - len(lines) - 2
 	if maxRawLines < 5 {
 		maxRawLines = 5
@@ -1109,10 +1115,9 @@ func (m Model) renderPreviewView(width, height int) string {
 		rawLines = rawLines[len(rawLines)-maxRawLines:]
 	}
 	for _, line := range rawLines {
-		if len(line) > width-6 {
-			line = line[:width-9] + "..."
-		}
-		lines = append(lines, "  "+previewStyle.Render(line))
+		// Don't truncate styled content - ANSI codes make length calculation wrong
+		// Just add padding and render directly to preserve colors
+		lines = append(lines, "  "+line)
 	}
 
 	return lipgloss.JoinVertical(lipgloss.Left, lines...)
@@ -1700,8 +1705,12 @@ func (m Model) renderSessionDetails(session detector.WaitingSession, width, heig
 		lines = append(lines, statusWaiting.Render(fmt.Sprintf("  %s REQUEST", promptType)))
 		lines = append(lines, "")
 
-		// Raw content preview
-		previewLines := strings.Split(session.RawContent, "\n")
+		// Raw content preview (use styled if available)
+		contentToShow := session.StyledContent
+		if contentToShow == "" {
+			contentToShow = session.RawContent
+		}
+		previewLines := strings.Split(contentToShow, "\n")
 		maxPreview := height - len(lines) - 2
 		if maxPreview > 10 {
 			maxPreview = 10
@@ -1711,10 +1720,8 @@ func (m Model) renderSessionDetails(session detector.WaitingSession, width, heig
 		}
 
 		for _, line := range previewLines {
-			if len(line) > width-2 {
-				line = line[:width-5] + "..."
-			}
-			lines = append(lines, previewStyle.Render("  "+line))
+			// Render directly to preserve ANSI colors
+			lines = append(lines, "  "+line)
 		}
 	}
 

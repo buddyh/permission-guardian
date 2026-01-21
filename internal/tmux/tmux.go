@@ -12,11 +12,11 @@ import (
 
 // Session represents a tmux session with its metadata
 type Session struct {
-	Name         string
-	Activity     time.Time
-	IdleSeconds  int
-	PanePID      int
-	PaneContent  string
+	Name        string
+	Activity    time.Time
+	IdleSeconds int
+	PanePID     int
+	PaneContent string
 }
 
 // runCmd executes a command and returns stdout
@@ -86,10 +86,16 @@ func GetPanePID(sessionName string) (int, error) {
 	return strconv.Atoi(lines[0])
 }
 
-// CapturePane captures the last N lines from a tmux pane
+// CapturePane captures the last N lines from a tmux pane (plain text)
 func CapturePane(sessionName string, lines int) (string, error) {
 	// Use -J to join wrapped lines and get full content
 	return runCmd("tmux", "capture-pane", "-t", sessionName, "-p", "-J", "-S", fmt.Sprintf("-%d", lines))
+}
+
+// CapturePaneStyled captures the last N lines with ANSI escape codes preserved
+func CapturePaneStyled(sessionName string, lines int) (string, error) {
+	// Use -e to include escape sequences (ANSI colors)
+	return runCmd("tmux", "capture-pane", "-t", sessionName, "-p", "-e", "-J", "-S", fmt.Sprintf("-%d", lines))
 }
 
 // SendKeys sends keystrokes to a tmux session

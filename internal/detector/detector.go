@@ -49,13 +49,14 @@ type SessionInfo struct {
 
 // WaitingSession represents a session waiting for permission approval
 type WaitingSession struct {
-	Session    tmux.Session
-	Agent      AgentType
-	PromptType PromptType
-	Request    string
-	RawContent string
-	CWD        string
-	Info       SessionInfo
+	Session       tmux.Session
+	Agent         AgentType
+	PromptType    PromptType
+	Request       string
+	RawContent    string // Plain text for detection
+	StyledContent string // ANSI-styled content for preview
+	CWD           string
+	Info          SessionInfo
 }
 
 // Status represents the current status of a session
@@ -498,14 +499,18 @@ func GetWaitingSessions(minIdleSeconds int, captureLines int) ([]WaitingSession,
 		rawStart := max(0, len(lines)-20)
 		rawContent := strings.Join(lines[rawStart:], "\n")
 
+		// Capture styled content for preview (with ANSI codes)
+		styledContent, _ := tmux.CapturePaneStyled(session.Name, 20)
+
 		waiting = append(waiting, WaitingSession{
-			Session:    session,
-			Agent:      agent,
-			PromptType: promptType,
-			Request:    strings.TrimSpace(request),
-			RawContent: rawContent,
-			CWD:        cwd,
-			Info:       info,
+			Session:       session,
+			Agent:         agent,
+			PromptType:    promptType,
+			Request:       strings.TrimSpace(request),
+			RawContent:    rawContent,
+			StyledContent: styledContent,
+			CWD:           cwd,
+			Info:          info,
 		})
 	}
 
@@ -556,14 +561,18 @@ func GetAllAgentSessions(captureLines int) ([]WaitingSession, error) {
 		rawStart := max(0, len(lines)-20)
 		rawContent := strings.Join(lines[rawStart:], "\n")
 
+		// Capture styled content for preview (with ANSI codes)
+		styledContent, _ := tmux.CapturePaneStyled(session.Name, 20)
+
 		agentSessions = append(agentSessions, WaitingSession{
-			Session:    session,
-			Agent:      agent,
-			PromptType: promptType,
-			Request:    strings.TrimSpace(request),
-			RawContent: rawContent,
-			CWD:        cwd,
-			Info:       info,
+			Session:       session,
+			Agent:         agent,
+			PromptType:    promptType,
+			Request:       strings.TrimSpace(request),
+			RawContent:    rawContent,
+			StyledContent: styledContent,
+			CWD:           cwd,
+			Info:          info,
 		})
 	}
 
