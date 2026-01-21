@@ -18,6 +18,7 @@ const (
 	PromptFetch   PromptType = "fetch"
 	PromptEdit    PromptType = "edit"
 	PromptWrite   PromptType = "write"
+	PromptRead    PromptType = "read" // Read, Search, Glob operations
 	PromptMCP     PromptType = "mcp"
 	PromptTask    PromptType = "task"
 	PromptTrust   PromptType = "trust" // Folder trust prompt (not a tool permission)
@@ -71,8 +72,9 @@ var promptPatterns = []*regexp.Regexp{
 	regexp.MustCompile(`Do you want to proceed\?`),
 	regexp.MustCompile(`Do you want to allow`),
 	regexp.MustCompile(`Would you like to run`),
-	regexp.MustCompile(`❯ 1\. Yes`),
+	regexp.MustCompile(`[❯>]\s*1\.\s*Yes`), // Match both ❯ and > selection indicators
 	regexp.MustCompile(`Yes, and don't ask again`),
+	regexp.MustCompile(`Yes, during this session`), // Another common option
 	regexp.MustCompile(`No, and tell Claude`),
 	regexp.MustCompile(`Do you want to create`),
 }
@@ -157,10 +159,23 @@ func mustAtoi(s string) int {
 	return n
 }
 
+// getRecentLines returns the last N lines of content
+// Used to avoid matching stale prompts in scrollback
+func getRecentLines(content string, n int) string {
+	lines := strings.Split(content, "\n")
+	if len(lines) <= n {
+		return content
+	}
+	return strings.Join(lines[len(lines)-n:], "\n")
+}
+
 // HasPermissionPrompt checks if content contains a permission prompt
+// Only checks recent lines to avoid matching stale prompts in scrollback
 func HasPermissionPrompt(content string) bool {
+	// Only check last 35 lines - prompts appear at bottom when active
+	recent := getRecentLines(content, 35)
 	for _, pattern := range promptPatterns {
-		if pattern.MatchString(content) {
+		if pattern.MatchString(recent) {
 			return true
 		}
 	}
@@ -168,29 +183,37 @@ func HasPermissionPrompt(content string) bool {
 }
 
 // DetectPromptType determines what type of permission is being requested
+// Uses recent content to avoid matching stale prompts in scrollback
 func DetectPromptType(content string) PromptType {
+	// Only check last 35 lines for prompt type detection
+	recent := getRecentLines(content, 35)
+
 	// Check for folder trust prompt FIRST - it contains "bash commands" text
 	// that would otherwise trigger bash detection
-	if strings.Contains(content, "Do you trust the files in this folder") ||
-		strings.Contains(content, "trust files in this") {
+	if strings.Contains(recent, "Do you trust the files in this folder") ||
+		strings.Contains(recent, "trust files in this") {
 		return PromptTrust
 	}
-	if strings.Contains(content, "Bash command") || strings.Contains(content, "Bash(") {
+	if strings.Contains(recent, "Bash command") || strings.Contains(recent, "Bash(") {
 		return PromptBash
 	}
-	if strings.Contains(content, "wants to fetch") || strings.Contains(content, "Fetch(") {
+	if strings.Contains(recent, "wants to fetch") || strings.Contains(recent, "Fetch(") {
 		return PromptFetch
 	}
-	if strings.Contains(content, "Edit(") || strings.Contains(content, "make this edit to") {
+	if strings.Contains(recent, "Edit(") || strings.Contains(recent, "make this edit to") {
 		return PromptEdit
 	}
-	if strings.Contains(content, "Write(") || strings.Contains(content, "Do you want to create") {
+	if strings.Contains(recent, "Write(") || strings.Contains(recent, "Do you want to create") {
 		return PromptWrite
 	}
-	if strings.Contains(content, "MCP") {
+	if strings.Contains(recent, "Read file") || strings.Contains(recent, "Read(") ||
+		strings.Contains(recent, "Search(") || strings.Contains(recent, "Glob(") {
+		return PromptRead
+	}
+	if strings.Contains(recent, "MCP") {
 		return PromptMCP
 	}
-	if strings.Contains(content, "Task(") {
+	if strings.Contains(recent, "Task(") {
 		return PromptTask
 	}
 	return PromptUnknown
@@ -211,6 +234,8 @@ func ExtractRequest(content string, promptType PromptType) string {
 		return extractWriteRequest(lines)
 	case PromptEdit:
 		return extractEditRequest(lines)
+	case PromptRead:
+		return extractReadRequest(lines)
 	}
 
 	return extractFallbackRequest(lines)
@@ -235,6 +260,30 @@ func extractTrustRequest(lines []string) string {
 		}
 	}
 	return "Folder trust request"
+}
+
+func extractReadRequest(lines []string) string {
+	// Extract Search, Glob, or Read patterns
+	for _, line := range lines {
+		trimmed := strings.TrimSpace(line)
+		// Match Search(pattern: "...", path: "...")
+		if strings.HasPrefix(trimmed, "Search(") || strings.HasPrefix(trimmed, "Glob(") || strings.HasPrefix(trimmed, "Read(") {
+			return trimmed
+		}
+	}
+	// Fallback: look for "Read file" header
+	for i, line := range lines {
+		if strings.Contains(line, "Read file") {
+			// Get next non-empty line as context
+			for j := i + 1; j < len(lines) && j < i+3; j++ {
+				next := strings.TrimSpace(lines[j])
+				if next != "" {
+					return next
+				}
+			}
+		}
+	}
+	return "Read/search request"
 }
 
 func extractBashRequest(lines []string) string {
