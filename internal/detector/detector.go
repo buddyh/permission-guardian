@@ -18,10 +18,11 @@ const (
 	PromptFetch   PromptType = "fetch"
 	PromptEdit    PromptType = "edit"
 	PromptWrite   PromptType = "write"
-	PromptRead    PromptType = "read" // Read, Search, Glob operations
+	PromptRead    PromptType = "read"  // Read, Search, Glob operations
 	PromptMCP     PromptType = "mcp"
 	PromptTask    PromptType = "task"
 	PromptTrust   PromptType = "trust" // Folder trust prompt (not a tool permission)
+	PromptPlan    PromptType = "plan"  // Plan mode interview (NOT a permission prompt)
 	PromptUnknown PromptType = "unknown"
 )
 
@@ -189,7 +190,15 @@ func DetectPromptType(content string) PromptType {
 	// Only check last 35 lines for prompt type detection
 	recent := getRecentLines(content, 35)
 
-	// Check for folder trust prompt FIRST - it contains "bash commands" text
+	// Check for plan mode FIRST - has numbered options but is NOT a permission prompt
+	// Key identifier: "Tab/Arrow keys to navigate · Esc to cancel"
+	if strings.Contains(recent, "Tab/Arrow keys to navigate") ||
+		strings.Contains(recent, "Skip interview and plan") ||
+		strings.Contains(recent, "Chat about this") {
+		return PromptPlan
+	}
+
+	// Check for folder trust prompt - it contains "bash commands" text
 	// that would otherwise trigger bash detection
 	if strings.Contains(recent, "Do you trust the files in this folder") ||
 		strings.Contains(recent, "trust files in this") {
@@ -225,6 +234,8 @@ func ExtractRequest(content string, promptType PromptType) string {
 	lines := strings.Split(content, "\n")
 
 	switch promptType {
+	case PromptPlan:
+		return extractPlanRequest(lines)
 	case PromptTrust:
 		return extractTrustRequest(lines)
 	case PromptBash:
@@ -240,6 +251,18 @@ func ExtractRequest(content string, promptType PromptType) string {
 	}
 
 	return extractFallbackRequest(lines)
+}
+
+func extractPlanRequest(lines []string) string {
+	// Plan mode shows a question with numbered options
+	// Look for lines ending with "?" as the question
+	for _, line := range lines {
+		trimmed := strings.TrimSpace(line)
+		if strings.HasSuffix(trimmed, "?") && len(trimmed) > 10 {
+			return "Plan: " + trimmed
+		}
+	}
+	return "Plan mode interview"
 }
 
 func extractTrustRequest(lines []string) string {

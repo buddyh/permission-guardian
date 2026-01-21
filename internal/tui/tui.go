@@ -835,6 +835,11 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				continue
 			}
 
+			// Never auto-approve plan mode - it's an interview, not a permission prompt
+			if session.PromptType == detector.PromptPlan {
+				continue
+			}
+
 			mode := m.autoApprove[session.Session.Name]
 			if mode == AutoOff {
 				continue // Auto-approve disabled
