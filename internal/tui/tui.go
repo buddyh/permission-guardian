@@ -164,6 +164,9 @@ type keyMap struct {
 	ToggleView     key.Binding
 	ViewLog        key.Binding
 	Preview        key.Binding
+	ToggleGit      key.Binding
+	ToggleCtx      key.Binding
+	ToggleModel    key.Binding
 	Quit           key.Binding
 }
 
@@ -215,6 +218,18 @@ var keys = keyMap{
 	Preview: key.NewBinding(
 		key.WithKeys("p"),
 		key.WithHelp("p", "preview"),
+	),
+	ToggleGit: key.NewBinding(
+		key.WithKeys("g"),
+		key.WithHelp("g", "git col"),
+	),
+	ToggleCtx: key.NewBinding(
+		key.WithKeys("c"),
+		key.WithHelp("c", "ctx col"),
+	),
+	ToggleModel: key.NewBinding(
+		key.WithKeys("M"),
+		key.WithHelp("M", "model col"),
 	),
 	Quit: key.NewBinding(
 		key.WithKeys("q", "ctrl+c"),
@@ -345,6 +360,8 @@ type Model struct {
 	showPreview bool
 	// View mode (compact/expanded)
 	viewMode ViewMode
+	// Hidden columns (user can toggle)
+	hiddenColumns map[Column]bool
 	// Audit database
 	auditDB *db.DB
 }
@@ -378,6 +395,7 @@ func New(refreshRate time.Duration) Model {
 		taskStartTime:   make(map[string]time.Time),
 		taskApprovals:   make(map[string]int),
 		lastActiveTime:  make(map[string]time.Time),
+		hiddenColumns:   make(map[Column]bool),
 		auditDB:         auditDB,
 	}
 }
@@ -735,6 +753,33 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			// Cycle view mode
 			m.viewMode = m.viewMode.Next()
 			m.actionStatus = fmt.Sprintf("View: %s", m.viewMode.String())
+			m.actionTime = time.Now()
+
+		case key.Matches(msg, keys.ToggleGit):
+			m.hiddenColumns[ColGit] = !m.hiddenColumns[ColGit]
+			if m.hiddenColumns[ColGit] {
+				m.actionStatus = "Git column: hidden"
+			} else {
+				m.actionStatus = "Git column: visible"
+			}
+			m.actionTime = time.Now()
+
+		case key.Matches(msg, keys.ToggleCtx):
+			m.hiddenColumns[ColCtx] = !m.hiddenColumns[ColCtx]
+			if m.hiddenColumns[ColCtx] {
+				m.actionStatus = "Context column: hidden"
+			} else {
+				m.actionStatus = "Context column: visible"
+			}
+			m.actionTime = time.Now()
+
+		case key.Matches(msg, keys.ToggleModel):
+			m.hiddenColumns[ColModel] = !m.hiddenColumns[ColModel]
+			if m.hiddenColumns[ColModel] {
+				m.actionStatus = "Model column: hidden"
+			} else {
+				m.actionStatus = "Model column: visible"
+			}
 			m.actionTime = time.Now()
 		}
 
@@ -1302,8 +1347,14 @@ func (m Model) renderSessionTable(width, height int) string {
 	}
 	title := panelTitleStyle.Render("SESSIONS" + viewIndicator)
 
-	// Get visible columns based on terminal width
-	columns := GetVisibleColumns(width - 4) // -4 for panel padding
+	// Get visible columns based on terminal width, then filter out user-hidden columns
+	allColumns := GetVisibleColumns(width - 4) // -4 for panel padding
+	var columns []ColumnDef
+	for _, col := range allColumns {
+		if !m.hiddenColumns[col.ID] {
+			columns = append(columns, col)
+		}
+	}
 
 	// Build header
 	sepStyle := lipgloss.NewStyle().Foreground(colorBorder)
@@ -1804,21 +1855,43 @@ func (m Model) detailLine(label, value string, width int) string {
 func (m Model) renderHelpBar(width int) string {
 	waiting := m.getWaitingSessions()
 
+	// Responsive help bar - fewer items and shorter labels at narrow widths
 	var items []string
 
-	if len(waiting) > 0 {
-		items = append(items, helpKeyStyle.Render("[1-9]")+" approve  "+helpKeyStyle.Render("[!-)]")+" always")
+	if width >= 140 {
+		// Full help bar
+		if len(waiting) > 0 {
+			items = append(items, helpKeyStyle.Render("[1-9]")+" approve  "+helpKeyStyle.Render("[!-)]")+" always")
+		}
+		items = append(items, helpKeyStyle.Render("[a]")+"pprove")
+		items = append(items, helpKeyStyle.Render("[s]")+" always")
+		items = append(items, helpKeyStyle.Render("[d]")+"eny")
+		items = append(items, helpKeyStyle.Render("[v]")+"iew")
+		items = append(items, helpKeyStyle.Render("[p]")+"review")
+		items = append(items, helpKeyStyle.Render("[t]")+" auto")
+		items = append(items, helpKeyStyle.Render("[T]")+" mode")
+		items = append(items, helpKeyStyle.Render("[b]")+"urst")
+		items = append(items, helpKeyStyle.Render("[g]")+"it")
+		items = append(items, helpKeyStyle.Render("[c]")+"tx")
+		items = append(items, helpKeyStyle.Render("[l]")+"og")
+		items = append(items, helpKeyStyle.Render("[q]")+"uit")
+	} else if width >= 100 {
+		// Medium help bar
+		items = append(items, helpKeyStyle.Render("a")+"pprv")
+		items = append(items, helpKeyStyle.Render("s")+" alw")
+		items = append(items, helpKeyStyle.Render("d")+"eny")
+		items = append(items, helpKeyStyle.Render("p")+"rvw")
+		items = append(items, helpKeyStyle.Render("t")+" auto")
+		items = append(items, helpKeyStyle.Render("b")+"urst")
+		items = append(items, helpKeyStyle.Render("g")+"it")
+		items = append(items, helpKeyStyle.Render("q")+"uit")
+	} else {
+		// Compact help bar - just essential keys
+		items = append(items, helpKeyStyle.Render("a")+"/"+helpKeyStyle.Render("d")+" y/n")
+		items = append(items, helpKeyStyle.Render("t")+" auto")
+		items = append(items, helpKeyStyle.Render("p")+" prv")
+		items = append(items, helpKeyStyle.Render("q")+" quit")
 	}
-	items = append(items, helpKeyStyle.Render("[a]")+"pprove")
-	items = append(items, helpKeyStyle.Render("[s]")+" always")
-	items = append(items, helpKeyStyle.Render("[d]")+"eny")
-	items = append(items, helpKeyStyle.Render("[v]")+"iew")
-	items = append(items, helpKeyStyle.Render("[p]")+"review")
-	items = append(items, helpKeyStyle.Render("[t]")+" auto on/off")
-	items = append(items, helpKeyStyle.Render("[T]")+" safe/all")
-	items = append(items, helpKeyStyle.Render("[b]")+"urst")
-	items = append(items, helpKeyStyle.Render("[l]")+"og")
-	items = append(items, helpKeyStyle.Render("[q]")+"uit")
 
 	help := strings.Join(items, "  ")
 
