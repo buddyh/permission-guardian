@@ -15,6 +15,7 @@ import (
 	"github.com/charmbracelet/bubbles/spinner"
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/charmbracelet/lipgloss"
+	"github.com/charmbracelet/x/ansi"
 )
 
 // ═══════════════════════════════════════════════════════════════════════════
@@ -229,7 +230,7 @@ var keys = keyMap{
 	),
 	ToggleModel: key.NewBinding(
 		key.WithKeys("M"),
-		key.WithHelp("M", "model col"),
+		key.WithHelp("M", "agent col"),
 	),
 	Quit: key.NewBinding(
 		key.WithKeys("q", "ctrl+c"),
@@ -776,9 +777,9 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		case key.Matches(msg, keys.ToggleModel):
 			m.hiddenColumns[ColModel] = !m.hiddenColumns[ColModel]
 			if m.hiddenColumns[ColModel] {
-				m.actionStatus = "Model column: hidden"
+				m.actionStatus = "Agent column: hidden"
 			} else {
-				m.actionStatus = "Model column: visible"
+				m.actionStatus = "Agent column: visible"
 			}
 			m.actionTime = time.Now()
 		}
@@ -1008,21 +1009,122 @@ func (m Model) getWaitingSessions() []detector.WaitingSession {
 	return waiting
 }
 
+// getMiniColumns returns compact columns optimized for narrow terminals
+func (m Model) getMiniColumns(width int) []ColumnDef {
+	// Start with mini column definitions
+	columns := make([]ColumnDef, len(MiniColumns))
+	copy(columns, MiniColumns)
+
+	// Calculate fixed width used
+	fixedWidth := 2 // padding
+	for _, col := range columns {
+		if col.ID != ColRequest {
+			fixedWidth += col.Width + MiniSeparatorWidth
+		}
+	}
+
+	// Remove optional columns if too narrow
+	if width < 70 {
+		// Remove DIR column
+		for i, col := range columns {
+			if col.ID == ColDir {
+				columns = append(columns[:i], columns[i+1:]...)
+				fixedWidth -= col.Width + MiniSeparatorWidth
+				break
+			}
+		}
+	}
+	if width < 60 {
+		// Remove TIME column
+		for i, col := range columns {
+			if col.ID == ColTime {
+				columns = append(columns[:i], columns[i+1:]...)
+				fixedWidth -= col.Width + MiniSeparatorWidth
+				break
+			}
+		}
+	}
+
+	minName := 6
+	minStatus := 4
+	minRequest := 6
+	if width < 32 {
+		minName = 4
+		minStatus = 3
+		minRequest = 4
+	}
+
+	// Tighten fixed columns if the request column would be too small.
+	remaining := width - fixedWidth - MiniSeparatorWidth
+	deficit := minRequest - remaining
+	if deficit > 0 {
+		shrink := func(id Column, minWidth int) {
+			if deficit <= 0 {
+				return
+			}
+			for i := range columns {
+				if columns[i].ID == id && columns[i].Width > minWidth {
+					delta := min(deficit, columns[i].Width-minWidth)
+					columns[i].Width -= delta
+					fixedWidth -= delta
+					deficit -= delta
+					return
+				}
+			}
+		}
+		shrink(ColName, minName)
+		shrink(ColStatus, minStatus)
+		remaining = width - fixedWidth - MiniSeparatorWidth
+	}
+	if remaining < 1 {
+		remaining = 1
+	}
+
+	// Set request column to remaining width
+	for i := range columns {
+		if columns[i].ID == ColRequest {
+			columns[i].Width = remaining
+		}
+	}
+
+	return columns
+}
+
 // ═══════════════════════════════════════════════════════════════════════════
 // View
 // ═══════════════════════════════════════════════════════════════════════════
+
+// shouldUseMiniMode returns true if mini mode should be active
+// (either manually selected or auto-triggered by narrow terminal)
+func (m Model) shouldUseMiniMode(width int) bool {
+	// If user explicitly selected mini mode, always use it
+	if m.viewMode == ViewMini {
+		return true
+	}
+	// Auto-trigger mini mode for very narrow terminals
+	return width < 90
+}
+
+// shouldUseFullHeader returns true when we have room for the full header.
+func (m Model) shouldUseFullHeader(width, height int) bool {
+	if m.viewMode != ViewExpanded {
+		return false
+	}
+	return width >= 90 && height >= 18
+}
+
 func (m Model) View() string {
 	if m.err != nil {
 		return fmt.Sprintf("\n  Error: %v\n\n  Press q to quit.\n", m.err)
 	}
 
 	width := m.width
-	if width < 80 {
-		width = 80
-	}
 	height := m.height
-	if height < 15 {
-		height = 15
+	if width < 24 {
+		width = 24
+	}
+	if height < 8 {
+		height = 8
 	}
 
 	// If showing log, render log view instead
@@ -1030,40 +1132,81 @@ func (m Model) View() string {
 		return m.renderLogView(width, height)
 	}
 
+	isMini := m.shouldUseMiniMode(width)
+	var header string
+	if m.shouldUseFullHeader(width, height) && !isMini {
+		header = m.renderHeader(width)
+	} else {
+		header = m.renderMiniHeader(width)
+	}
+	header = lipgloss.NewStyle().Width(width).Render(header)
+	headerHeight := lipgloss.Height(header)
+
+	helpMode := helpModeForSize(width, height, isMini)
+	helpBar := m.renderHelpBar(width, helpMode, isMini)
+	helpHeight := 0
+	if helpBar != "" {
+		helpHeight = lipgloss.Height(helpBar)
+	}
+
+	minContentHeight := 6
+	availableHeight := height - headerHeight - helpHeight
+	if availableHeight < minContentHeight && helpMode != helpModeMinimal {
+		helpMode = helpModeMinimal
+		helpBar = m.renderHelpBar(width, helpMode, isMini)
+		helpHeight = 0
+		if helpBar != "" {
+			helpHeight = lipgloss.Height(helpBar)
+		}
+		availableHeight = height - headerHeight - helpHeight
+	}
+	if availableHeight < minContentHeight && helpBar != "" {
+		helpBar = ""
+		helpHeight = 0
+		availableHeight = height - headerHeight
+	}
+	if availableHeight < 1 {
+		availableHeight = 1
+	}
+
+	helpAtTop := helpBar != "" && height < 14
 	var sections []string
-
-	// Header with logo (8 lines)
-	sections = append(sections, m.renderHeader(width))
-
-	// Help bar (2 lines)
-	helpBar := m.renderHelpBar(width)
-
-	// Calculate available height for main content
-	// Header ~8 lines, help ~2 lines
-	availableHeight := height - 10
-	if availableHeight < 10 {
-		availableHeight = 10
+	sections = append(sections, header)
+	if helpAtTop {
+		sections = append(sections, helpBar)
 	}
 
 	if m.showPreview && m.cursor < len(m.sessions) {
-		// Split view: sessions on top (~40%), preview on bottom (~60%)
-		sessionsHeight := availableHeight * 2 / 5
-		if sessionsHeight < 6 {
-			sessionsHeight = 6
+		if availableHeight < 10 {
+			sections = append(sections, m.renderPreviewView(width, availableHeight))
+		} else {
+			// Split view: sessions on top (~40%), preview on bottom (~60%)
+			sessionsHeight := availableHeight * 2 / 5
+			if sessionsHeight < 6 {
+				sessionsHeight = 6
+			}
+			previewHeight := availableHeight - sessionsHeight
+			if previewHeight < 4 {
+				previewHeight = 4
+				sessionsHeight = availableHeight - previewHeight
+			}
+
+			// Render compact sessions table (no detail panel)
+			sections = append(sections, m.renderSessionTable(width, sessionsHeight))
+
+			// Render preview panel below
+			if previewHeight > 0 {
+				sections = append(sections, m.renderSplitPreview(width, previewHeight))
+			}
 		}
-		previewHeight := availableHeight - sessionsHeight
-
-		// Render compact sessions table (no detail panel)
-		sections = append(sections, m.renderSessionTable(width, sessionsHeight))
-
-		// Render preview panel below
-		sections = append(sections, m.renderSplitPreview(width, previewHeight))
 	} else {
 		// Normal view: full sessions with optional detail panel
 		sections = append(sections, m.renderMainContent(width, availableHeight))
 	}
 
-	sections = append(sections, helpBar)
+	if !helpAtTop && helpBar != "" {
+		sections = append(sections, helpBar)
+	}
 
 	return lipgloss.JoinVertical(lipgloss.Left, sections...)
 }
@@ -1113,14 +1256,19 @@ func (m Model) renderPreviewView(width, height int) string {
 	}
 
 	session := m.sessions[m.cursor]
+	compact := height < 14
 
 	// Title bar
 	title := statusAccent.Render(fmt.Sprintf(" PREVIEW: %s (press any key to close) ", session.Session.Name))
 
 	var lines []string
-	lines = append(lines, "")
+	if !compact {
+		lines = append(lines, "")
+	}
 	lines = append(lines, title)
-	lines = append(lines, "")
+	if !compact {
+		lines = append(lines, "")
+	}
 
 	// Session metadata
 	metaStyle := detailLabelStyle
@@ -1142,15 +1290,21 @@ func (m Model) renderPreviewView(width, height int) string {
 		lines = append(lines, metaStyle.Render("  Dir:     ")+valStyle.Render(cwd))
 	}
 
-	lines = append(lines, "")
+	if !compact {
+		lines = append(lines, "")
+	}
 	lines = append(lines, dividerStyle.Render(strings.Repeat("─", width-4)))
 
 	// Show request prominently if waiting
 	if session.PromptType != detector.PromptUnknown {
 		promptType := strings.ToUpper(string(session.PromptType))
-		lines = append(lines, "")
+		if !compact {
+			lines = append(lines, "")
+		}
 		lines = append(lines, statusWaiting.Bold(true).Render(fmt.Sprintf("  %s REQUEST:", promptType)))
-		lines = append(lines, "")
+		if !compact {
+			lines = append(lines, "")
+		}
 
 		// Show the extracted request (this is the good parsed content)
 		reqLines := strings.Split(session.Request, "\n")
@@ -1161,14 +1315,20 @@ func (m Model) renderPreviewView(width, height int) string {
 			lines = append(lines, "  "+statusWaiting.Render(line))
 		}
 
-		lines = append(lines, "")
+		if !compact {
+			lines = append(lines, "")
+		}
 		lines = append(lines, dividerStyle.Render(strings.Repeat("─", width-4)))
 	}
 
 	// Raw content - show as much as fits (with terminal styling preserved)
-	lines = append(lines, "")
+	if !compact {
+		lines = append(lines, "")
+	}
 	lines = append(lines, detailLabelStyle.Render("  TERMINAL CONTENT:"))
-	lines = append(lines, "")
+	if !compact {
+		lines = append(lines, "")
+	}
 
 	// Use StyledContent if available (preserves ANSI colors), fall back to RawContent
 	contentToShow := session.StyledContent
@@ -1177,17 +1337,19 @@ func (m Model) renderPreviewView(width, height int) string {
 	}
 
 	rawLines := strings.Split(contentToShow, "\n")
-	maxRawLines := height - len(lines) - 2
-	if maxRawLines < 5 {
-		maxRawLines = 5
+	maxRawLines := height - len(lines)
+	if maxRawLines < 0 {
+		maxRawLines = 0
 	}
-	if len(rawLines) > maxRawLines {
-		rawLines = rawLines[len(rawLines)-maxRawLines:]
-	}
-	for _, line := range rawLines {
-		// Don't truncate styled content - ANSI codes make length calculation wrong
-		// Just add padding and render directly to preserve colors
-		lines = append(lines, "  "+line)
+	if maxRawLines > 0 {
+		if len(rawLines) > maxRawLines {
+			rawLines = rawLines[len(rawLines)-maxRawLines:]
+		}
+		for _, line := range rawLines {
+			// Don't truncate styled content - ANSI codes make length calculation wrong
+			// Just add padding and render directly to preserve colors
+			lines = append(lines, "  "+line)
+		}
 	}
 
 	return lipgloss.JoinVertical(lipgloss.Left, lines...)
@@ -1217,8 +1379,8 @@ func (m Model) renderSplitPreview(width, height int) string {
 
 	// Calculate how many lines we can show
 	maxLines := height - 3 // Account for title and panel borders
-	if maxLines < 3 {
-		maxLines = 3
+	if maxLines < 1 {
+		maxLines = 1
 	}
 
 	// Show the last N lines (most recent content)
@@ -1308,23 +1470,77 @@ func (m Model) renderHeader(width int) string {
 	// Combine logo and stats
 	header := lipgloss.JoinHorizontal(lipgloss.Top, logoBlock, "    ", statsBlock)
 
-	return header + "\n"
+	return header
+}
+
+// renderMiniHeader renders a compact single-line header for mini mode
+func (m Model) renderMiniHeader(width int) string {
+	waiting := m.getWaitingSessions()
+	totalSessions := len(m.sessions)
+	waitingCount := len(waiting)
+
+	// Build compact status line: "PG │ 5 sessions │ 2 WAITING │ ⣾"
+	parts := []string{
+		statusAccent.Bold(true).Render("PG"),
+		detailValueStyle.Render(fmt.Sprintf("%d sess", totalSessions)),
+	}
+
+	if waitingCount > 0 {
+		parts = append(parts, statusWaiting.Render(fmt.Sprintf("%d WAIT", waitingCount)))
+	} else {
+		parts = append(parts, statusApproved.Render("OK"))
+	}
+
+	parts = append(parts, m.spinner.View())
+
+	// Add action status if present
+	if m.actionStatus != "" {
+		status := m.actionStatus
+		if width > 0 {
+			maxStatusLen := max(8, min(20, width/4))
+			if len(status) > maxStatusLen {
+				status = status[:maxStatusLen-3] + "..."
+			}
+		} else if len(status) > 20 {
+			status = status[:17] + "..."
+		}
+		var styledStatus string
+		switch {
+		case strings.HasPrefix(status, "AUTO"):
+			styledStatus = statusAuto.Render(status)
+		case strings.HasPrefix(status, "SKIP"):
+			styledStatus = statusWaiting.Render(status)
+		default:
+			styledStatus = detailLabelStyle.Render(status)
+		}
+		parts = append(parts, styledStatus)
+	}
+
+	header := strings.Join(parts, dividerStyle.Render(" │ "))
+	return " " + header
 }
 
 func (m Model) renderMainContent(width, height int) string {
 	// Check if we need detail panel (only for waiting sessions)
 	showDetail := m.cursor < len(m.sessions) && m.sessions[m.cursor].PromptType != detector.PromptUnknown
 
-	// Detail panel is compact - only 6 lines when shown
+	// Detail panel is compact and collapses on short screens.
 	detailHeight := 0
 	if showDetail {
-		detailHeight = 6
+		switch {
+		case height >= 16:
+			detailHeight = 6
+		case height >= 12:
+			detailHeight = 4
+		default:
+			detailHeight = 0
+		}
 	}
 
 	// Table gets all remaining height - sessions are priority!
 	tableHeight := height - detailHeight
-	if tableHeight < 5 {
-		tableHeight = 5
+	if tableHeight < 4 {
+		tableHeight = 4
 	}
 
 	// Full-width session table at top
@@ -1332,7 +1548,7 @@ func (m Model) renderMainContent(width, height int) string {
 
 	// Detail panel at bottom (only if waiting session selected)
 	var detailPanel string
-	if showDetail {
+	if showDetail && detailHeight > 0 {
 		detailPanel = m.renderDetailPanel(width, detailHeight)
 	}
 
@@ -1340,15 +1556,36 @@ func (m Model) renderMainContent(width, height int) string {
 }
 
 func (m Model) renderSessionTable(width, height int) string {
-	// Get view mode indicator for title
+	isMini := m.shouldUseMiniMode(width)
+
+	// Get view mode indicator for title (shorter in mini mode)
 	viewIndicator := ""
-	if m.viewMode == ViewExpanded {
+	if isMini {
+		viewIndicator = " [M]"
+	} else if m.viewMode == ViewExpanded {
 		viewIndicator = " [Expanded]"
 	}
 	title := panelTitleStyle.Render("SESSIONS" + viewIndicator)
 
-	// Get visible columns based on terminal width, then filter out user-hidden columns
-	allColumns := GetVisibleColumns(width - 4) // -4 for panel padding
+	// Get column definitions based on mode
+	var allColumns []ColumnDef
+	var separator string
+	var sepWidth int
+	innerWidth := width - 4
+	if innerWidth < 0 {
+		innerWidth = 0
+	}
+	if isMini {
+		allColumns = m.getMiniColumns(innerWidth)
+		separator = MiniSeparator
+		sepWidth = MiniSeparatorWidth
+	} else {
+		allColumns = GetVisibleColumns(innerWidth) // -4 for panel padding
+		separator = ColumnSeparator
+		sepWidth = SeparatorWidth
+	}
+
+	// Filter out user-hidden columns
 	var columns []ColumnDef
 	for _, col := range allColumns {
 		if !m.hiddenColumns[col.ID] {
@@ -1366,8 +1603,13 @@ func (m Model) renderSessionTable(width, height int) string {
 		headerCells = append(headerCells, headerTextStyle.Width(col.Width).Render(col.Header))
 		divParts = append(divParts, strings.Repeat("─", col.Width))
 	}
-	headerLine := " " + strings.Join(headerCells, sepStyle.Render(ColumnSeparator))
-	divider := dividerStyle.Render(" " + strings.Join(divParts, "─┼─"))
+	headerLine := " " + strings.Join(headerCells, sepStyle.Render(separator))
+	divSep := "─"
+	if !isMini {
+		divSep = "─┼─"
+	}
+	_ = sepWidth // suppress unused warning
+	divider := dividerStyle.Render(" " + strings.Join(divParts, divSep))
 
 	var lines []string
 	lines = append(lines, headerLine)
@@ -1376,7 +1618,7 @@ func (m Model) renderSessionTable(width, height int) string {
 	waitingNum := 1
 	for i, session := range m.sessions {
 		isSelected := i == m.cursor
-		rowLines := m.renderTableRow(session, isSelected, waitingNum, width-4, i, columns)
+		rowLines := m.renderTableRow(session, isSelected, waitingNum, innerWidth, i, columns, isMini)
 		lines = append(lines, rowLines...)
 
 		if session.PromptType != detector.PromptUnknown {
@@ -1388,16 +1630,19 @@ func (m Model) renderSessionTable(width, height int) string {
 		lines = append(lines, statusIdle.Render("  No sessions found"))
 	}
 
-	content := lipgloss.JoinVertical(lipgloss.Left, lines...)
-
-	// NO padding - sessions get exactly the space they need
-	// Only truncate if we have more lines than can fit
-	contentLines := strings.Split(content, "\n")
 	maxLines := height - 3
-	if maxLines > 0 && len(contentLines) > maxLines {
-		contentLines = contentLines[:maxLines]
+	if maxLines > 0 {
+		if len(lines) > maxLines {
+			lines = lines[:maxLines]
+		} else if len(lines) < maxLines {
+			rowIndex := len(m.sessions)
+			for len(lines) < maxLines {
+				lines = append(lines, m.renderEmptyRow(columns, isMini, rowIndex))
+				rowIndex++
+			}
+		}
 	}
-	content = strings.Join(contentLines, "\n")
+	content := strings.Join(lines, "\n")
 
 	panel := panelStyle.Width(width).Render(
 		lipgloss.JoinVertical(lipgloss.Left, title, content),
@@ -1406,9 +1651,15 @@ func (m Model) renderSessionTable(width, height int) string {
 	return panel
 }
 
-func (m Model) renderTableRow(session detector.WaitingSession, selected bool, waitingNum int, width int, rowIndex int, columns []ColumnDef) []string {
+func (m Model) renderTableRow(session detector.WaitingSession, selected bool, waitingNum int, width int, rowIndex int, columns []ColumnDef, isMini bool) []string {
 	isWaiting := session.PromptType != detector.PromptUnknown
 	sepStyle := lipgloss.NewStyle().Foreground(colorBorder)
+
+	// Choose separator based on mode
+	separator := ColumnSeparator
+	if isMini {
+		separator = MiniSeparator
+	}
 
 	// Determine row background
 	var rowBg lipgloss.Color
@@ -1426,7 +1677,7 @@ func (m Model) renderTableRow(session detector.WaitingSession, selected bool, wa
 	}
 
 	// Prepare all column values
-	values := m.getColumnValues(session, isWaiting, waitingNum, columns)
+	values := m.getColumnValues(session, isWaiting, waitingNum, columns, isMini)
 
 	// Build cells for visible columns only
 	var cells []string
@@ -1449,7 +1700,7 @@ func (m Model) renderTableRow(session detector.WaitingSession, selected bool, wa
 	}
 
 	// Separator with background
-	sep := withBg(sepStyle).Render(ColumnSeparator)
+	sep := withBg(sepStyle).Render(separator)
 	row := strings.Join(cells, sep)
 
 	// Add selection indicator or space prefix
@@ -1493,6 +1744,33 @@ func (m Model) renderTableRow(session detector.WaitingSession, selected bool, wa
 	return result
 }
 
+func (m Model) renderEmptyRow(columns []ColumnDef, isMini bool, rowIndex int) string {
+	sepStyle := lipgloss.NewStyle().Foreground(colorBorder)
+	separator := ColumnSeparator
+	if isMini {
+		separator = MiniSeparator
+	}
+
+	rowBg := colorBg
+	if rowIndex%2 == 1 {
+		rowBg = lipgloss.Color("#252840")
+	}
+	withBg := func(s lipgloss.Style) lipgloss.Style {
+		return s.Background(rowBg)
+	}
+
+	var cells []string
+	for _, col := range columns {
+		cells = append(cells, withBg(lipgloss.NewStyle()).Width(col.Width).Render(""))
+	}
+
+	sep := withBg(sepStyle).Render(separator)
+	row := strings.Join(cells, sep)
+	row = withBg(lipgloss.NewStyle()).Render(" ") + row
+
+	return row
+}
+
 // ColumnValue holds the text and style for a column cell
 type ColumnValue struct {
 	Text  string
@@ -1500,12 +1778,16 @@ type ColumnValue struct {
 }
 
 // getColumnValues returns the display value and style for each column
-func (m Model) getColumnValues(session detector.WaitingSession, isWaiting bool, waitingNum int, columns []ColumnDef) map[Column]ColumnValue {
+func (m Model) getColumnValues(session detector.WaitingSession, isWaiting bool, waitingNum int, columns []ColumnDef, isMini bool) map[Column]ColumnValue {
 	values := make(map[Column]ColumnValue)
 
 	// NUM
 	if isWaiting {
-		values[ColNum] = ColumnValue{fmt.Sprintf("%d.", waitingNum), statusWaiting.Bold(true)}
+		if isMini {
+			values[ColNum] = ColumnValue{fmt.Sprintf("%d", waitingNum), statusWaiting.Bold(true)}
+		} else {
+			values[ColNum] = ColumnValue{fmt.Sprintf("%d.", waitingNum), statusWaiting.Bold(true)}
+		}
 	} else {
 		values[ColNum] = ColumnValue{"", statusIdle}
 	}
@@ -1518,23 +1800,39 @@ func (m Model) getColumnValues(session detector.WaitingSession, isWaiting bool, 
 	}
 	values[ColName] = ColumnValue{name, sessionNameStyle}
 
-	// STATUS
+	// STATUS - use shorter labels in mini mode
 	autoMode := m.autoApprove[session.Session.Name]
 	isBurst := m.burstMode[session.Session.Name]
 	var statusText string
 	var statusStyle lipgloss.Style
 	if autoMode != AutoOff {
 		if isBurst {
-			statusText = autoMode.String() + "+B"
+			if isMini {
+				statusText = autoMode.String()[0:1] + "B" // "SB" or "AB"
+			} else {
+				statusText = autoMode.String() + "+B"
+			}
 		} else {
-			statusText = autoMode.String()
+			if isMini {
+				statusText = autoMode.String()[0:1] // "S" or "A"
+			} else {
+				statusText = autoMode.String()
+			}
 		}
 		statusStyle = statusAuto
 	} else if isWaiting {
-		statusText = "WAITING"
+		if isMini {
+			statusText = "WAIT"
+		} else {
+			statusText = "WAITING"
+		}
 		statusStyle = statusWaiting
 	} else if session.Info.IsWorking {
-		statusText = "working"
+		if isMini {
+			statusText = "work"
+		} else {
+			statusText = "working"
+		}
 		statusStyle = statusWorking
 	} else {
 		statusText = "idle"
@@ -1542,16 +1840,19 @@ func (m Model) getColumnValues(session detector.WaitingSession, isWaiting bool, 
 	}
 	values[ColStatus] = ColumnValue{statusText, statusStyle}
 
-	// TIME - task duration
+	// TIME - prefer session info from status line, fall back to local timer
 	var timeText string
 	var timeStyle lipgloss.Style
-	if startTime, exists := m.taskStartTime[session.Session.Name]; exists {
+	if session.Info.SessionTime != "" {
+		timeText = session.Info.SessionTime
+		timeStyle = detailValueStyle
+	} else if startTime, exists := m.taskStartTime[session.Session.Name]; exists {
 		duration := time.Since(startTime)
 		timeText = formatDuration(duration)
 		if duration > 30*time.Minute {
-			timeStyle = statusWaiting // Yellow for long-running
+			timeStyle = statusWaiting
 		} else {
-			timeStyle = statusWorking // Purple for active
+			timeStyle = statusWorking
 		}
 	} else {
 		timeText = "-"
@@ -1559,16 +1860,29 @@ func (m Model) getColumnValues(session detector.WaitingSession, isWaiting bool, 
 	}
 	values[ColTime] = ColumnValue{timeText, timeStyle}
 
-	// MODEL
-	model := strings.TrimSpace(session.Info.Model)
-	if model == "" {
-		model = "-"
+	// MODEL -> now shows Agent type (Claude/Codex)
+	var agentText string
+	var agentStyle lipgloss.Style
+	switch session.Agent {
+	case detector.AgentClaude:
+		if isMini {
+			agentText = "CC"
+		} else {
+			agentText = "Claude"
+		}
+		agentStyle = lipgloss.NewStyle().Foreground(colorInfo)
+	case detector.AgentCodex:
+		if isMini {
+			agentText = "CX"
+		} else {
+			agentText = "Codex"
+		}
+		agentStyle = lipgloss.NewStyle().Foreground(colorAccent)
+	default:
+		agentText = "-"
+		agentStyle = detailLabelStyle
 	}
-	modelWidth := GetColumnWidth(columns, ColModel)
-	if modelWidth > 0 && len(model) > modelWidth {
-		model = model[:modelWidth]
-	}
-	values[ColModel] = ColumnValue{model, detailLabelStyle}
+	values[ColModel] = ColumnValue{agentText, agentStyle}
 
 	// CTX
 	ctxWidth := GetColumnWidth(columns, ColCtx)
@@ -1607,7 +1921,7 @@ func (m Model) getColumnValues(session detector.WaitingSession, isWaiting bool, 
 	}
 	values[ColDir] = ColumnValue{dir, detailLabelStyle}
 
-	// REQUEST
+	// REQUEST - show prompt request if waiting, working status if active, last input if idle
 	var req string
 	var reqStyle lipgloss.Style
 	if isWaiting {
@@ -1618,6 +1932,12 @@ func (m Model) getColumnValues(session detector.WaitingSession, isWaiting bool, 
 		req = strings.ReplaceAll(req, "\n", " ")
 		req = strings.TrimSpace(req)
 		reqStyle = statusWaiting
+	} else if session.Info.IsWorking && session.Info.WorkingStatus != "" {
+		req = session.Info.WorkingStatus
+		reqStyle = statusWorking
+	} else if session.Info.LastUserInput != "" {
+		req = session.Info.LastUserInput
+		reqStyle = detailValueStyle
 	} else {
 		req = "-"
 		reqStyle = statusIdle
@@ -1852,48 +2172,148 @@ func (m Model) detailLine(label, value string, width int) string {
 	return labelStr + valueStr
 }
 
-func (m Model) renderHelpBar(width int) string {
-	waiting := m.getWaitingSessions()
+type helpMode int
 
-	// Responsive help bar - fewer items and shorter labels at narrow widths
-	var items []string
+const (
+	helpModeMinimal helpMode = iota
+	helpModeCompact
+	helpModeMedium
+	helpModeFull
+)
 
-	if width >= 140 {
-		// Full help bar
-		if len(waiting) > 0 {
-			items = append(items, helpKeyStyle.Render("[1-9]")+" approve  "+helpKeyStyle.Render("[!-)]")+" always")
-		}
-		items = append(items, helpKeyStyle.Render("[a]")+"pprove")
-		items = append(items, helpKeyStyle.Render("[s]")+" always")
-		items = append(items, helpKeyStyle.Render("[d]")+"eny")
-		items = append(items, helpKeyStyle.Render("[v]")+"iew")
-		items = append(items, helpKeyStyle.Render("[p]")+"review")
-		items = append(items, helpKeyStyle.Render("[t]")+" auto")
-		items = append(items, helpKeyStyle.Render("[T]")+" mode")
-		items = append(items, helpKeyStyle.Render("[b]")+"urst")
-		items = append(items, helpKeyStyle.Render("[g]")+"it")
-		items = append(items, helpKeyStyle.Render("[c]")+"tx")
-		items = append(items, helpKeyStyle.Render("[l]")+"og")
-		items = append(items, helpKeyStyle.Render("[q]")+"uit")
-	} else if width >= 100 {
-		// Medium help bar
-		items = append(items, helpKeyStyle.Render("a")+"pprv")
-		items = append(items, helpKeyStyle.Render("s")+" alw")
-		items = append(items, helpKeyStyle.Render("d")+"eny")
-		items = append(items, helpKeyStyle.Render("p")+"rvw")
-		items = append(items, helpKeyStyle.Render("t")+" auto")
-		items = append(items, helpKeyStyle.Render("b")+"urst")
-		items = append(items, helpKeyStyle.Render("g")+"it")
-		items = append(items, helpKeyStyle.Render("q")+"uit")
-	} else {
-		// Compact help bar - just essential keys
-		items = append(items, helpKeyStyle.Render("a")+"/"+helpKeyStyle.Render("d")+" y/n")
-		items = append(items, helpKeyStyle.Render("t")+" auto")
-		items = append(items, helpKeyStyle.Render("p")+" prv")
-		items = append(items, helpKeyStyle.Render("q")+" quit")
+func helpModeForSize(width, height int, isMini bool) helpMode {
+	mode := helpModeMinimal
+	switch {
+	case width >= 100:
+		mode = helpModeFull
+	case width >= 90:
+		mode = helpModeMedium
+	case width >= 70:
+		mode = helpModeCompact
+	default:
+		mode = helpModeMinimal
 	}
 
-	help := strings.Join(items, "  ")
+	if isMini && mode > helpModeCompact {
+		mode = helpModeCompact
+	}
+	if height < 10 {
+		return helpModeMinimal
+	}
+	if height < 12 && mode > helpModeCompact {
+		mode = helpModeCompact
+	}
 
-	return helpStyle.Render(help)
+	return mode
+}
+
+func (m Model) renderHelpBar(width int, mode helpMode, isMini bool) string {
+	if width <= 0 {
+		return ""
+	}
+
+	waiting := m.getWaitingSessions()
+
+	// Responsive help bar - structured rows for readability.
+	item := func(key, label string) string {
+		if label == "" {
+			return helpKeyStyle.Render(key)
+		}
+		return helpKeyStyle.Render(key) + " " + label
+	}
+
+	var lines [][]string
+	switch mode {
+	case helpModeFull:
+		line1 := []string{}
+		if len(waiting) > 0 {
+			line1 = append(line1, item("[1-9]", "approve"), item("[!-)]", "always"))
+		}
+		line1 = append(line1,
+			item("[a]", "approve"),
+			item("[s]", "always"),
+			item("[d]", "deny"),
+			item("[p]", "preview"),
+			item("[v]", "view"),
+			item("[l]", "log"),
+		)
+		line2 := []string{
+			item("[t]", "auto"),
+			item("[T]", "mode"),
+			item("[b]", "burst"),
+			item("[g]", "git"),
+			item("[c]", "ctx"),
+			item("[M]", "agent"),
+			item("[q]", "quit"),
+		}
+		lines = [][]string{line1, line2}
+	case helpModeMedium:
+		line1 := []string{
+			item("[a]", "approve"),
+			item("[s]", "always"),
+			item("[d]", "deny"),
+			item("[p]", "preview"),
+			item("[v]", "view"),
+			item("[l]", "log"),
+		}
+		line2 := []string{
+			item("[t]", "auto"),
+			item("[T]", "mode"),
+			item("[b]", "burst"),
+			item("[g]", "git"),
+			item("[c]", "ctx"),
+			item("[M]", "agent"),
+			item("[q]", "quit"),
+		}
+		lines = [][]string{line1, line2}
+	case helpModeCompact:
+		lines = append(lines, []string{
+			helpKeyStyle.Render("a") + "/" + helpKeyStyle.Render("d") + " y/n",
+			helpKeyStyle.Render("t") + " auto",
+			helpKeyStyle.Render("p") + " preview",
+			helpKeyStyle.Render("v") + " view",
+			helpKeyStyle.Render("q") + " quit",
+		})
+	default:
+		if isMini {
+			lines = append(lines, []string{
+				helpKeyStyle.Render("a") + "/" + helpKeyStyle.Render("d"),
+				helpKeyStyle.Render("t"),
+				helpKeyStyle.Render("v"),
+				helpKeyStyle.Render("q"),
+			})
+		} else {
+			lines = append(lines, []string{
+				helpKeyStyle.Render("a") + "/" + helpKeyStyle.Render("d"),
+				helpKeyStyle.Render("t"),
+				helpKeyStyle.Render("p"),
+				helpKeyStyle.Render("q"),
+			})
+		}
+	}
+
+	pad := 2
+	if width < 50 {
+		pad = 1
+	}
+	if width < 40 {
+		pad = 0
+	}
+	wrapWidth := width - pad*2
+	if wrapWidth < 1 {
+		wrapWidth = 1
+	}
+
+	var rendered []string
+	for _, items := range lines {
+		if len(items) == 0 {
+			continue
+		}
+		line := strings.Join(items, "  ")
+		rendered = append(rendered, ansi.Wrap(line, wrapWidth, " "))
+	}
+	if len(rendered) == 0 {
+		return ""
+	}
+	return helpStyle.Padding(0, pad).Render(strings.Join(rendered, "\n"))
 }

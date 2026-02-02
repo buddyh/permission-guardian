@@ -8,6 +8,8 @@ const (
 	ViewCompact ViewMode = iota
 	// ViewExpanded shows two lines per session - info on first, request on second
 	ViewExpanded
+	// ViewMini is a super compact mode for small terminals - minimal headers, no logo
+	ViewMini
 )
 
 // String returns the display name for the view mode
@@ -17,6 +19,8 @@ func (v ViewMode) String() string {
 		return "Compact"
 	case ViewExpanded:
 		return "Expanded"
+	case ViewMini:
+		return "Mini"
 	default:
 		return "Unknown"
 	}
@@ -28,6 +32,8 @@ func (v ViewMode) Next() ViewMode {
 	case ViewCompact:
 		return ViewExpanded
 	case ViewExpanded:
+		return ViewMini
+	case ViewMini:
 		return ViewCompact
 	default:
 		return ViewCompact
@@ -64,12 +70,30 @@ var DefaultColumns = []ColumnDef{
 	{ID: ColName, Header: "SESSION", Width: 18, MinWidth: 0, Priority: 1},
 	{ID: ColStatus, Header: "STATUS", Width: 8, MinWidth: 0, Priority: 2},
 	{ID: ColTime, Header: "TIME", Width: 7, MinWidth: 85, Priority: 3},
-	{ID: ColModel, Header: "MODEL", Width: 9, MinWidth: 100, Priority: 6},
-	{ID: ColCtx, Header: "CTX", Width: 6, MinWidth: 90, Priority: 7},
+	{ID: ColModel, Header: "AGENT", Width: 7, MinWidth: 100, Priority: 6},
+	{ID: ColCtx, Header: "CTX", Width: 6, MinWidth: 0, Priority: 3},
 	{ID: ColGit, Header: "GIT", Width: 14, MinWidth: 110, Priority: 5},
 	{ID: ColDir, Header: "DIRECTORY", Width: 25, MinWidth: 80, Priority: 4},
 	{ID: ColRequest, Header: "REQUEST", Width: 0, MinWidth: 0, Priority: 0}, // Flexible width
 }
+
+// MiniColumns defines super compact columns for small terminals
+// Uses 1-2 character headers and minimal widths
+var MiniColumns = []ColumnDef{
+	{ID: ColNum, Header: "#", Width: 2, MinWidth: 0, Priority: 0},
+	{ID: ColName, Header: "SESS", Width: 12, MinWidth: 0, Priority: 1},
+	{ID: ColStatus, Header: "ST", Width: 5, MinWidth: 0, Priority: 2},
+	{ID: ColTime, Header: "T", Width: 5, MinWidth: 60, Priority: 3},
+	{ID: ColCtx, Header: "C", Width: 5, MinWidth: 55, Priority: 3},
+	{ID: ColDir, Header: "DIR", Width: 15, MinWidth: 70, Priority: 4},
+	{ID: ColRequest, Header: "REQ", Width: 0, MinWidth: 0, Priority: 0},
+}
+
+// MiniSeparator is a thinner separator for mini mode
+const MiniSeparator = "│"
+
+// MiniSeparatorWidth is 1 character
+const MiniSeparatorWidth = 1
 
 // ColumnSeparator is the string used between columns
 const ColumnSeparator = " │ "

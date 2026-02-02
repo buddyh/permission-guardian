@@ -98,6 +98,12 @@ func CapturePaneStyled(sessionName string, lines int) (string, error) {
 	return runCmd("tmux", "capture-pane", "-t", sessionName, "-p", "-e", "-J", "-S", fmt.Sprintf("-%d", lines))
 }
 
+// GetPaneCWD returns the current working directory of a session's pane
+// This comes from tmux's own tracking (via OSC 7), not from pane content
+func GetPaneCWD(sessionName string) (string, error) {
+	return runCmd("tmux", "list-panes", "-t", sessionName, "-F", "#{pane_current_path}")
+}
+
 // SendKeys sends keystrokes to a tmux session
 func SendKeys(sessionName string, keys string) error {
 	_, err := runCmd("tmux", "send-keys", "-t", sessionName, keys)

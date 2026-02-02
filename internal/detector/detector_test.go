@@ -11,38 +11,48 @@ func TestHasPermissionPrompt(t *testing.T) {
 		expected bool
 	}{
 		{
-			name:     "yes option detected",
+			name:     "yes option detected with selector",
 			content:  "Some content\n\u276F 1. Yes\nMore content",
 			expected: true,
 		},
 		{
-			name:     "do you want to proceed",
-			content:  "Running command\nDo you want to proceed?\n> Yes",
+			name:     "do you want to proceed with selector",
+			content:  "Running command\nDo you want to proceed?\n› 1. Yes\n  2. No",
 			expected: true,
 		},
 		{
-			name:     "do you want to allow",
-			content:  "Do you want to allow this action?",
+			name:     "do you want to allow with selector",
+			content:  "Do you want to allow this action?\n❯ 1. Yes\n  2. No",
 			expected: true,
 		},
 		{
-			name:     "do you want to create",
-			content:  "Do you want to create this file?",
+			name:     "do you want to create with selector",
+			content:  "Do you want to create this file?\n> 1. Yes\n  2. No",
 			expected: true,
 		},
 		{
-			name:     "yes and dont ask again",
-			content:  "Yes, and don't ask again for this session",
+			name:     "yes and dont ask again with selector",
+			content:  "Some prompt\n› 1. Yes\n  2. Yes, and don't ask again for this session",
 			expected: true,
 		},
 		{
-			name:     "no tell claude option",
-			content:  "No, and tell Claude what went wrong",
+			name:     "no tell claude option with selector",
+			content:  "Some prompt\n› 1. Yes\n  2. No, and tell Claude what went wrong",
 			expected: true,
 		},
 		{
-			name:     "no prompt",
+			name:     "codex prompt with selector",
+			content:  "Would you like to run the following command?\n$ ls -la\n› 1. Yes, proceed (y)\n  2. No",
+			expected: true,
+		},
+		{
+			name:     "no prompt - regular output",
 			content:  "Just some regular output\nwith multiple lines",
+			expected: false,
+		},
+		{
+			name:     "no prompt - stale text without selector",
+			content:  "Do you want to proceed?\nYes",
 			expected: false,
 		},
 		{
@@ -195,7 +205,7 @@ func TestExtractSessionInfo(t *testing.T) {
 			name:            "working status",
 			content:         "\u273D Manifesting...\n(ctrl+c to interrupt)",
 			expectWorking:   true,
-			expectWorkingSt: "Manifesting...",
+			expectWorkingSt: "Manifesting",
 		},
 		{
 			name:            "compacting status",
@@ -208,6 +218,40 @@ func TestExtractSessionInfo(t *testing.T) {
 			content:       "Model: Sonnet Ctx: 12k",
 			expectModel:   "Sonnet",
 			expectContext: "12k",
+		},
+		{
+			name:            "codex working status",
+			content:         "• Planning snippet extraction (1m 11s • esc to interrupt)\n\n› Improve docs\n\n  65% context left · ? for shortcuts",
+			expectWorking:   true,
+			expectWorkingSt: "Planning snippet extraction",
+			expectContext:   "65%",
+		},
+		{
+			name:            "codex working short time",
+			content:         "• Searching files (26s • esc to interrupt)\n\n  78% context left",
+			expectWorking:   true,
+			expectWorkingSt: "Searching files",
+			expectContext:   "78%",
+		},
+		{
+			name:          "past tense completion - not working",
+			content:       "\u273B Crunched for 2m 47s\n\n❯ \nModel: Opus Ctx: 50k",
+			expectWorking: false,
+			expectModel:   "Opus",
+			expectContext: "50k",
+		},
+		{
+			name:          "past tense cooked - not working",
+			content:       "\u273B Cooked for 8m 39s\n\n❯ \nModel: Sonnet Ctx: 12k",
+			expectWorking: false,
+			expectModel:   "Sonnet",
+		},
+		{
+			name:            "active with token count - is working",
+			content:         "\u2731 Updating BrandRecapAnalyzer (1m 28s \u2022 \u2191 2.5k tok\nModel: Opus Ctx: 68.5k",
+			expectWorking:   true,
+			expectWorkingSt: "Updating BrandRecapAnalyzer",
+			expectContext:   "68.5k",
 		},
 	}
 

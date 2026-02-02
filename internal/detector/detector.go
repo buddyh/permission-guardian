@@ -74,10 +74,12 @@ var promptPatterns = []*regexp.Regexp{
 	regexp.MustCompile(`Do you want to proceed\?`),
 	regexp.MustCompile(`Do you want to allow`),
 	regexp.MustCompile(`Would you like to run`),
-	regexp.MustCompile(`[❯>]\s*1\.\s*Yes`), // Match both ❯ and > selection indicators
+	regexp.MustCompile(`[❯>›]\s*1\.\s*Yes`), // Match ❯, >, and › (Codex uses ›)
 	regexp.MustCompile(`Yes, and don't ask again`),
 	regexp.MustCompile(`Yes, during this session`), // Another common option
+	regexp.MustCompile(`Yes, proceed`),             // Codex prompt option
 	regexp.MustCompile(`No, and tell Claude`),
+	regexp.MustCompile(`No, and tell Codex`), // Codex deny option
 	regexp.MustCompile(`Do you want to create`),
 }
 
@@ -93,11 +95,29 @@ var (
 	sessionPattern    = regexp.MustCompile(`Session:[\s\x{00A0}]*([^\s\x{00A0}]+)`)
 	blockPattern      = regexp.MustCompile(`Block:[\s\x{00A0}]*([^\s\x{00A0}]+(?:[\s\x{00A0}]+\d+\w)?)`)
 	userInputPattern  = regexp.MustCompile(`❯[\s\x{00A0}]*(.+)`)
-	// Working status: "✽ Manifesting…" or "⏺ Reading..." with "(ctrl+c to interrupt)"
-	workingPattern = regexp.MustCompile(`[✽⏺][\s\x{00A0}]*(\w+(?:ing|\.\.\.)[…\.]*)`)
+	// Working status indicators - Claude Code uses various bullet characters:
+	// ✽ (U+273D), ⏺ (U+23FA), ✻ (U+273B), ✱ (U+2731), * (plain asterisk)
+	// Followed by "Something..." with either "(ctrl+c to interrupt)" or "(1m 28s • ↑ 2.5k tok"
+	workingBullets  = `[✽⏺✻✱]`
+	workingPattern  = regexp.MustCompile(workingBullets + `[\s\x{00A0}]*(.+?)(?:\s*\(|$)`)
+	ctrlCPattern    = regexp.MustCompile(`\(ctrl\+c to interrupt`)
+	// New format: "(1m 28s • ↑ 2.5k tok" or "(3s • ↑ 100 tok"
+	tokenCountPattern = regexp.MustCompile(`\(\d+[ms]\s*\d*[ms]?\s*[•·]\s*[↑↓]`)
 	// Compacting status: "· Compacting conversation…"
 	compactingPattern = regexp.MustCompile(`·[\s\x{00A0}]*(Compacting[^…\n]*[…\.]+)`)
-	ctrlCPattern      = regexp.MustCompile(`\(ctrl\+c to interrupt`)
+	// Accept edits mode: "⏵⏵ accept edits on"
+	acceptEditsPattern = regexp.MustCompile(`⏵⏵\s*accept edits`)
+	// Past-tense completion: "✻ Crunched for 2m 47s", "✻ Worked for 6m 26s", "✻ Cooked for 8m"
+	// Same bullet as working, but past tense verb + "for" = done
+	completionPattern = regexp.MustCompile(workingBullets + `[\s\x{00A0}]*\w+ed\s+for\s+`)
+
+	// Codex working status: "• Planning snippet extraction (1m 11s • esc to interrupt)"
+	// Time can be "26s", "1m 11s", "2m 5s", etc.
+	codexWorkingPattern = regexp.MustCompile(`\((?:\d+m\s*)?\d+s\s*[•·]\s*esc to interrupt\)`)
+	// Codex working line starts with bullet: "• Planning snippet extraction"
+	codexWorkingLinePattern = regexp.MustCompile(`(?m)^[•]\s*(.+?)\s*\((?:\d+m\s*)?\d+s`)
+	// Codex context: "65% context left"
+	codexContextPattern = regexp.MustCompile(`(\d+)%\s*context\s*left`)
 )
 
 // DetectAgent checks if a pane is running Claude Code or Codex
@@ -171,16 +191,29 @@ func getRecentLines(content string, n int) string {
 	return strings.Join(lines[len(lines)-n:], "\n")
 }
 
+// Active selection indicators - these only appear when prompt is active
+var activeSelectionPattern = regexp.MustCompile(`(?m)^[\s]*[❯>›]\s*[123]\.\s*`)
+
 // HasPermissionPrompt checks if content contains a permission prompt
 // Only checks recent lines to avoid matching stale prompts in scrollback
+// Requires both a prompt pattern AND an active selection indicator
 func HasPermissionPrompt(content string) bool {
-	// Only check last 35 lines - prompts appear at bottom when active
-	recent := getRecentLines(content, 35)
-	for _, pattern := range promptPatterns {
-		if pattern.MatchString(recent) {
-			return true
+	// Only check last 25 lines - prompts appear at bottom when active
+	recent := getRecentLines(content, 25)
+
+	// First, check if there's an active selection indicator (› 1. or ❯ 1. etc)
+	// This is the strongest signal that a prompt is currently active
+	hasActiveSelector := activeSelectionPattern.MatchString(recent)
+
+	// If we have an active selector, check for any prompt patterns
+	if hasActiveSelector {
+		for _, pattern := range promptPatterns {
+			if pattern.MatchString(recent) {
+				return true
+			}
 		}
 	}
+
 	return false
 }
 
@@ -204,6 +237,12 @@ func DetectPromptType(content string) PromptType {
 		strings.Contains(recent, "trust files in this") {
 		return PromptTrust
 	}
+
+	// Codex command prompt: "Would you like to run the following command?"
+	if strings.Contains(recent, "Would you like to run the following command") {
+		return PromptBash
+	}
+
 	if strings.Contains(recent, "Bash command") || strings.Contains(recent, "Bash(") {
 		return PromptBash
 	}
@@ -311,6 +350,40 @@ func extractReadRequest(lines []string) string {
 }
 
 func extractBashRequest(lines []string) string {
+	// Try Codex format first: "Would you like to run the following command?" ... "$ command"
+	for i, line := range lines {
+		if strings.Contains(line, "Would you like to run the following command") {
+			// Look for the $ command line after this
+			for j := i + 1; j < len(lines); j++ {
+				trimmed := strings.TrimSpace(lines[j])
+				if strings.HasPrefix(trimmed, "$") || strings.HasPrefix(trimmed, "$ ") {
+					// Found command - collect it (may span multiple lines)
+					cmd := strings.TrimPrefix(trimmed, "$ ")
+					cmd = strings.TrimPrefix(cmd, "$")
+					cmd = strings.TrimSpace(cmd)
+					// Continue collecting if command continues on next lines
+					for k := j + 1; k < len(lines) && k < j+5; k++ {
+						nextLine := strings.TrimSpace(lines[k])
+						// Stop at option lines
+						if strings.HasPrefix(nextLine, "›") || strings.HasPrefix(nextLine, "1.") ||
+							strings.HasPrefix(nextLine, "2.") || strings.HasPrefix(nextLine, "3.") {
+							break
+						}
+						if nextLine != "" && !strings.HasPrefix(nextLine, "Reason:") {
+							cmd += " " + nextLine
+						}
+					}
+					return cmd
+				}
+				// Also check for Reason line
+				if strings.HasPrefix(trimmed, "Reason:") {
+					continue // Skip reason, keep looking for command
+				}
+			}
+		}
+	}
+
+	// Claude Code format: "Bash command" block
 	var result []string
 	inBlock := false
 
@@ -390,7 +463,20 @@ func extractFallbackRequest(lines []string) string {
 	return ""
 }
 
-// ExtractCWD extracts the working directory from pane content
+// GetPaneCWD gets the working directory directly from tmux (works for any agent)
+func GetPaneCWD(sessionName string) string {
+	cwd, err := tmux.GetPaneCWD(sessionName)
+	if err == nil && cwd != "" {
+		// list-panes may return multiple lines if multiple panes; take first
+		if idx := strings.Index(cwd, "\n"); idx > 0 {
+			cwd = cwd[:idx]
+		}
+		return strings.TrimSpace(cwd)
+	}
+	return ""
+}
+
+// ExtractCWD extracts the working directory from pane content (fallback)
 func ExtractCWD(content string) string {
 	match := cwdPattern.FindStringSubmatch(content)
 	if len(match) > 1 {
@@ -458,17 +544,55 @@ func ExtractSessionInfo(content string) SessionInfo {
 	}
 	recentContent := strings.Join(lastLines, "\n")
 
-	if ctrlCPattern.MatchString(recentContent) {
+	// Working detection: check for ctrl+c interrupt OR token count format OR accept edits
+	// BUT exclude past-tense completion messages like "✻ Crunched for 2m 47s"
+	isActive := ctrlCPattern.MatchString(recentContent) ||
+		tokenCountPattern.MatchString(recentContent) ||
+		acceptEditsPattern.MatchString(recentContent)
+
+	if isActive {
 		info.IsWorking = true
 		if match := workingPattern.FindStringSubmatch(recentContent); len(match) > 1 {
-			info.WorkingStatus = match[1]
+			status := strings.TrimSpace(match[1])
+			status = strings.TrimRight(status, ".")
+			status = strings.TrimRight(status, "\u2026")
+			if status != "" {
+				info.WorkingStatus = status
+			}
 		}
+		if info.WorkingStatus == "" {
+			info.WorkingStatus = "working"
+		}
+	}
+
+	// Check for past-tense completion: "✻ Crunched for 2m 47s", "✻ Worked for 6m 26s"
+	// These use the SAME bullet but indicate work is DONE, not in progress
+	if completionPattern.MatchString(recentContent) && !ctrlCPattern.MatchString(recentContent) && !tokenCountPattern.MatchString(recentContent) {
+		info.IsWorking = false
+		info.WorkingStatus = ""
 	}
 
 	// Compacting status detection - "· Compacting conversation…"
 	if match := compactingPattern.FindStringSubmatch(recentContent); len(match) > 1 {
 		info.IsWorking = true
 		info.WorkingStatus = match[1]
+	}
+
+	// Codex working status: "• Planning snippet extraction (1m 11s • esc to interrupt)"
+	if codexWorkingPattern.MatchString(recentContent) {
+		info.IsWorking = true
+		if match := codexWorkingLinePattern.FindStringSubmatch(recentContent); len(match) > 1 {
+			info.WorkingStatus = strings.TrimSpace(match[1])
+		}
+		if info.WorkingStatus == "" {
+			info.WorkingStatus = "working"
+		}
+	}
+
+	// Codex context: "78% context left" -> convert to approximate k value
+	if match := codexContextPattern.FindStringSubmatch(recentContent); len(match) > 1 {
+		pct := match[1]
+		info.ContextSize = pct + "%"
 	}
 
 	return info
@@ -514,7 +638,11 @@ func GetWaitingSessions(minIdleSeconds int, captureLines int) ([]WaitingSession,
 
 		promptType := DetectPromptType(content)
 		request := ExtractRequest(content, promptType)
-		cwd := ExtractCWD(content)
+		// Prefer tmux-native CWD (works for all agents), fall back to content parsing
+		cwd := GetPaneCWD(session.Name)
+		if cwd == "" {
+			cwd = ExtractCWD(content)
+		}
 		info := ExtractSessionInfo(content)
 
 		// Get last 20 lines for raw content
@@ -576,7 +704,11 @@ func GetAllAgentSessions(captureLines int) ([]WaitingSession, error) {
 			request = ExtractRequest(content, promptType)
 		}
 
-		cwd := ExtractCWD(content)
+		// Prefer tmux-native CWD (works for all agents), fall back to content parsing
+		cwd := GetPaneCWD(session.Name)
+		if cwd == "" {
+			cwd = ExtractCWD(content)
+		}
 		info := ExtractSessionInfo(content)
 
 		// Get last 20 lines for raw content

@@ -11,6 +11,7 @@ func TestViewModeString(t *testing.T) {
 	}{
 		{ViewCompact, "Compact"},
 		{ViewExpanded, "Expanded"},
+		{ViewMini, "Mini"},
 		{ViewMode(99), "Unknown"},
 	}
 
@@ -28,7 +29,8 @@ func TestViewModeNext(t *testing.T) {
 		want ViewMode
 	}{
 		{ViewCompact, ViewExpanded},
-		{ViewExpanded, ViewCompact},
+		{ViewExpanded, ViewMini},
+		{ViewMini, ViewCompact},
 	}
 
 	for _, tt := range tests {
@@ -63,12 +65,11 @@ func TestGetVisibleColumns(t *testing.T) {
 			mustHave: []Column{ColNum, ColName, ColStatus, ColTime, ColDir, ColRequest},
 		},
 		{
-			name:        "narrow terminal",
-			width:       80,
-			wantMin:     4,
-			wantMax:     6,
-			mustHave:    []Column{ColNum, ColName, ColStatus, ColRequest},
-			mustNotHave: []Column{ColCtx}, // Context bar should be hidden first
+			name:     "narrow terminal",
+			width:    80,
+			wantMin:  4,
+			wantMax:  7,
+			mustHave: []Column{ColNum, ColName, ColStatus, ColCtx, ColRequest},
 		},
 		{
 			name:     "very narrow terminal",
