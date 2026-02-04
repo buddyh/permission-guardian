@@ -101,26 +101,31 @@ const ColumnSeparator = " │ "
 // SeparatorWidth is the rendered width of the column separator
 const SeparatorWidth = 3
 
+// shrinkMinWidths defines minimum widths for columns that can shrink before being hidden
+var shrinkMinWidths = map[Column]int{
+	ColName: 12,
+	ColDir:  15,
+	ColGit:  10,
+}
+
 // GetVisibleColumns returns columns that fit in the given width, sorted by priority
 func GetVisibleColumns(width int) []ColumnDef {
-	// Start with all columns
 	visible := make([]ColumnDef, 0, len(DefaultColumns))
 
 	// Calculate total fixed width needed
 	fixedWidth := 0
 	for _, col := range DefaultColumns {
-		if col.ID != ColRequest { // Request column is flexible
+		if col.ID != ColRequest {
 			fixedWidth += col.Width + SeparatorWidth
 		}
 	}
 
-	// If we have enough space, show everything
-	if width >= fixedWidth+20 { // 20 min for request column
+	// If we have enough space at full widths, show everything
+	if width >= fixedWidth+20 {
 		for _, col := range DefaultColumns {
 			visible = append(visible, col)
 		}
-		// Set request column to remaining width
-		remaining := width - fixedWidth - 4 // padding
+		remaining := width - fixedWidth - 4
 		if remaining < 20 {
 			remaining = 20
 		}
@@ -132,64 +137,91 @@ func GetVisibleColumns(width int) []ColumnDef {
 		return visible
 	}
 
-	// Otherwise, progressively hide columns by priority (higher priority number = hide first)
-	// Keep removing columns until we fit
+	// Phase 1: Try shrinking flexible columns before hiding any
 	columnsToConsider := make([]ColumnDef, len(DefaultColumns))
 	copy(columnsToConsider, DefaultColumns)
 
-	for {
-		// Calculate current width
-		currentWidth := 4 // base padding
-		requestWidth := 20
+	// Calculate how much space we need to reclaim
+	minRequestWidth := 15
+	usedWidth := 4 // base padding
+	for _, col := range columnsToConsider {
+		if col.ID != ColRequest {
+			usedWidth += col.Width + SeparatorWidth
+		}
+	}
+	usedWidth += minRequestWidth + SeparatorWidth
+	deficit := usedWidth - width
+
+	if deficit > 0 {
+		// Shrink columns with shrinkMinWidths, largest shrink potential first
+		for deficit > 0 {
+			bestIdx := -1
+			bestShrink := 0
+			for i, col := range columnsToConsider {
+				if minW, ok := shrinkMinWidths[col.ID]; ok {
+					available := col.Width - minW
+					if available > bestShrink {
+						bestShrink = available
+						bestIdx = i
+					}
+				}
+			}
+			if bestIdx == -1 || bestShrink == 0 {
+				break
+			}
+			delta := bestShrink
+			if delta > deficit {
+				delta = deficit
+			}
+			columnsToConsider[bestIdx].Width -= delta
+			deficit -= delta
+		}
+	}
+
+	// Phase 2: If still doesn't fit, hide columns by priority
+	for deficit > 0 {
 		numCols := 0
 		for _, col := range columnsToConsider {
-			if col.ID == ColRequest {
-				continue
+			if col.ID != ColRequest {
+				numCols++
 			}
-			currentWidth += col.Width + SeparatorWidth
-			numCols++
 		}
-		currentWidth += requestWidth + SeparatorWidth
-
-		if currentWidth <= width || numCols <= 3 {
-			// We fit or can't remove more
+		if numCols <= 3 {
 			break
 		}
 
-		// Find highest priority column to remove (highest number = least important)
 		maxPriority := -1
 		removeIdx := -1
 		for i, col := range columnsToConsider {
 			if col.ID == ColRequest || col.ID == ColNum || col.ID == ColName || col.ID == ColStatus {
-				continue // Never remove these
+				continue
 			}
 			if col.Priority > maxPriority {
 				maxPriority = col.Priority
 				removeIdx = i
 			}
 		}
-
 		if removeIdx == -1 {
-			break // Nothing more to remove
+			break
 		}
 
-		// Remove the column
+		removed := columnsToConsider[removeIdx]
 		columnsToConsider = append(columnsToConsider[:removeIdx], columnsToConsider[removeIdx+1:]...)
+		deficit -= removed.Width + SeparatorWidth
 	}
 
 	// Calculate final request width
-	usedWidth := 4
+	usedWidth = 4
 	for _, col := range columnsToConsider {
 		if col.ID != ColRequest {
 			usedWidth += col.Width + SeparatorWidth
 		}
 	}
 	remaining := width - usedWidth - SeparatorWidth
-	if remaining < 15 {
-		remaining = 15
+	if remaining < minRequestWidth {
+		remaining = minRequestWidth
 	}
 
-	// Build final list
 	for _, col := range columnsToConsider {
 		if col.ID == ColRequest {
 			col.Width = remaining

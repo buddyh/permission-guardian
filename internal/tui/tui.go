@@ -1935,9 +1935,6 @@ func (m Model) getColumnValues(session detector.WaitingSession, isWaiting bool, 
 	} else if session.Info.IsWorking && session.Info.WorkingStatus != "" {
 		req = session.Info.WorkingStatus
 		reqStyle = statusWorking
-	} else if session.Info.LastUserInput != "" {
-		req = session.Info.LastUserInput
-		reqStyle = detailValueStyle
 	} else {
 		req = "-"
 		reqStyle = statusIdle
