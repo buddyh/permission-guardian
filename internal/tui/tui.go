@@ -13,6 +13,7 @@ import (
 	"github.com/buddyh/permission-guardian/internal/tmux"
 	"github.com/charmbracelet/bubbles/key"
 	"github.com/charmbracelet/bubbles/spinner"
+	"github.com/charmbracelet/bubbles/textinput"
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/charmbracelet/lipgloss"
 	"github.com/charmbracelet/x/ansi"
@@ -153,22 +154,25 @@ Monitor`
 // Key bindings
 // ═══════════════════════════════════════════════════════════════════════════
 type keyMap struct {
-	Up             key.Binding
-	Down           key.Binding
-	Approve        key.Binding
-	ApproveAlways  key.Binding
-	Deny           key.Binding
-	Refresh        key.Binding
-	ToggleAuto     key.Binding
-	ToggleAutoMode key.Binding
-	ToggleBurst    key.Binding
-	ToggleView     key.Binding
-	ViewLog        key.Binding
-	Preview        key.Binding
-	ToggleGit      key.Binding
-	ToggleCtx      key.Binding
-	ToggleModel    key.Binding
-	Quit           key.Binding
+	Up               key.Binding
+	Down             key.Binding
+	Approve          key.Binding
+	ApproveAlways    key.Binding
+	Deny             key.Binding
+	Refresh          key.Binding
+	ToggleAuto       key.Binding
+	ToggleAutoMode   key.Binding
+	ToggleNoDelete   key.Binding
+	ToggleBurst      key.Binding
+	ToggleView       key.Binding
+	ViewLog          key.Binding
+	Preview          key.Binding
+	SendText         key.Binding
+	RenameSession    key.Binding
+	ToggleGit        key.Binding
+	ToggleCtx        key.Binding
+	ToggleModel      key.Binding
+	Quit             key.Binding
 }
 
 var keys = keyMap{
@@ -204,6 +208,10 @@ var keys = keyMap{
 		key.WithKeys("T", "m"),
 		key.WithHelp("T", "safe/all"),
 	),
+	ToggleNoDelete: key.NewBinding(
+		key.WithKeys("x"),
+		key.WithHelp("x", "nodelete"),
+	),
 	ToggleBurst: key.NewBinding(
 		key.WithKeys("b"),
 		key.WithHelp("b", "burst mode"),
@@ -219,6 +227,14 @@ var keys = keyMap{
 	Preview: key.NewBinding(
 		key.WithKeys("p"),
 		key.WithHelp("p", "preview"),
+	),
+	SendText: key.NewBinding(
+		key.WithKeys("i"),
+		key.WithHelp("i", "send text"),
+	),
+	RenameSession: key.NewBinding(
+		key.WithKeys("R"),
+		key.WithHelp("R", "rename"),
 	),
 	ToggleGit: key.NewBinding(
 		key.WithKeys("g"),
@@ -258,15 +274,18 @@ type actionMsg struct {
 type AutoMode int
 
 const (
-	AutoOff  AutoMode = iota // No auto-approve
-	AutoSafe                 // Approve all except destructive commands
-	AutoAll                  // Approve everything (yolo)
+	AutoOff      AutoMode = iota // No auto-approve
+	AutoSafe                     // Approve all except destructive commands
+	AutoNoDelete                 // Approve all except delete commands (files, folders, db records)
+	AutoAll                      // Approve everything (yolo)
 )
 
 func (m AutoMode) String() string {
 	switch m {
 	case AutoSafe:
 		return "SAFE"
+	case AutoNoDelete:
+		return "NODEL"
 	case AutoAll:
 		return "ALL"
 	default:
@@ -279,6 +298,8 @@ func (m AutoMode) Next() AutoMode {
 	case AutoOff:
 		return AutoSafe
 	case AutoSafe:
+		return AutoNoDelete
+	case AutoNoDelete:
 		return AutoAll
 	case AutoAll:
 		return AutoOff
@@ -329,6 +350,30 @@ func isDestructiveCommand(request string) bool {
 	return false
 }
 
+// Delete-only patterns - subset that specifically destroy files, folders, or database records
+var deletePatterns = []string{
+	// File/folder deletion
+	"rm -rf", "rm -fr", "rm -r", "rm -f",
+	"rmdir",
+	"sudo rm",
+	// Database deletion
+	"DROP TABLE", "DROP DATABASE", "TRUNCATE",
+	"DELETE FROM", "DELETE * FROM",
+	// Docker deletion
+	"docker system prune", "docker rm -f", "docker rmi -f",
+}
+
+// isDeleteCommand checks if a request contains delete-specific patterns (files, folders, db records)
+func isDeleteCommand(request string) bool {
+	reqLower := strings.ToLower(request)
+	for _, pattern := range deletePatterns {
+		if strings.Contains(reqLower, strings.ToLower(pattern)) {
+			return true
+		}
+	}
+	return false
+}
+
 // ═══════════════════════════════════════════════════════════════════════════
 // Model
 // ═══════════════════════════════════════════════════════════════════════════
@@ -359,6 +404,9 @@ type Model struct {
 	logLines []string
 	// Expanded preview mode
 	showPreview bool
+	// Text input mode
+	inputMode bool
+	textInput textinput.Model
 	// View mode (compact/expanded)
 	viewMode ViewMode
 	// Hidden columns (user can toggle)
@@ -384,6 +432,13 @@ func New(refreshRate time.Duration) Model {
 	// Open audit database (non-fatal if it fails)
 	auditDB, _ := db.Open()
 
+	ti := textinput.New()
+	ti.Placeholder = "Type text to send (Enter to send, Esc to cancel)"
+	ti.CharLimit = 500
+	ti.Width = 60
+	ti.PromptStyle = lipgloss.NewStyle().Foreground(colorAccent).Bold(true)
+	ti.TextStyle = lipgloss.NewStyle().Foreground(colorTextPri)
+
 	return Model{
 		spinner:         s,
 		refreshRate:     refreshRate,
@@ -397,6 +452,7 @@ func New(refreshRate time.Duration) Model {
 		taskApprovals:   make(map[string]int),
 		lastActiveTime:  make(map[string]time.Time),
 		hiddenColumns:   make(map[Column]bool),
+		textInput:       ti,
 		auditDB:         auditDB,
 	}
 }
@@ -558,20 +614,88 @@ func denySession(sessionName string) tea.Cmd {
 	}
 }
 
+func sendTextToSession(sessionName, text string) tea.Cmd {
+	return func() tea.Msg {
+		if text != "" {
+			if err := tmux.SendText(sessionName, text); err != nil {
+				return actionMsg{session: sessionName, action: "send text", err: err}
+			}
+			time.Sleep(50 * time.Millisecond)
+		}
+		if err := tmux.SendEnter(sessionName); err != nil {
+			return actionMsg{session: sessionName, action: "send text", err: err}
+		}
+		return actionMsg{session: sessionName, action: "sent to", err: nil}
+	}
+}
+
+func renameSessionCmd(oldName, newName string) tea.Cmd {
+	return func() tea.Msg {
+		if err := tmux.RenameSession(oldName, newName); err != nil {
+			return actionMsg{session: oldName, action: "rename", err: err}
+		}
+		return actionMsg{session: newName, action: "renamed", err: nil}
+	}
+}
+
+func generateSessionName(cwd string, existingNames []string) string {
+	base := filepath.Base(cwd)
+	timestamp := time.Now().Format("01021504") // MMddHHmm
+	candidate := base + "-" + timestamp
+
+	nameSet := make(map[string]bool)
+	for _, n := range existingNames {
+		nameSet[n] = true
+	}
+
+	if !nameSet[candidate] {
+		return candidate
+	}
+
+	for i := 2; i <= 99; i++ {
+		suffixed := fmt.Sprintf("%s-%d", candidate, i)
+		if !nameSet[suffixed] {
+			return suffixed
+		}
+	}
+	return candidate
+}
+
 func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	switch msg := msg.(type) {
 	case tea.KeyMsg:
+		// If in text input mode, route all keys to textinput
+		if m.inputMode {
+			switch msg.Type {
+			case tea.KeyEnter:
+				text := m.textInput.Value()
+				m.inputMode = false
+				m.textInput.Reset()
+				m.textInput.Blur()
+				if m.cursor < len(m.sessions) {
+					sessionName := m.sessions[m.cursor].Session.Name
+					return m, sendTextToSession(sessionName, text)
+				}
+				return m, nil
+			case tea.KeyEsc:
+				m.inputMode = false
+				m.textInput.Reset()
+				m.textInput.Blur()
+				return m, nil
+			default:
+				var cmd tea.Cmd
+				m.textInput, cmd = m.textInput.Update(msg)
+				return m, cmd
+			}
+		}
+
 		// If viewing log, any key exits log view
 		if m.showLog {
 			m.showLog = false
 			return m, nil
 		}
 
-		// If viewing preview, any key exits preview view
-		if m.showPreview {
-			m.showPreview = false
-			return m, nil
-		}
+		// Preview mode stays open - toggle with 'p' key only
 
 		// Handle number keys 1-9 for quick approve
 		if len(msg.String()) == 1 && msg.String() >= "1" && msg.String() <= "9" {
@@ -698,20 +822,43 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			}
 
 		case key.Matches(msg, keys.ToggleAutoMode):
-			// Switch between SAFE and ALL (only when auto is already on)
+			// Cycle between SAFE → NODEL → ALL (only when auto is already on)
 			if m.cursor < len(m.sessions) {
 				name := m.sessions[m.cursor].Session.Name
 				currentMode := m.autoApprove[name]
 
-				if currentMode == AutoSafe {
+				switch currentMode {
+				case AutoSafe:
+					m.autoApprove[name] = AutoNoDelete
+					m.actionStatus = fmt.Sprintf("AUTO NODEL: %s (skip deletes)", name)
+				case AutoNoDelete:
 					m.autoApprove[name] = AutoAll
 					m.actionStatus = fmt.Sprintf("AUTO ALL: %s (approve everything!)", name)
-				} else if currentMode == AutoAll {
+				case AutoAll:
 					m.autoApprove[name] = AutoSafe
 					m.actionStatus = fmt.Sprintf("AUTO SAFE: %s (skip destructive)", name)
-				} else {
+				default:
 					// Auto is off - inform user
 					m.actionStatus = fmt.Sprintf("Auto is OFF - press [t] first: %s", name)
+				}
+				m.actionTime = time.Now()
+			}
+
+		case key.Matches(msg, keys.ToggleNoDelete):
+			// Toggle NODELETE mode ON/OFF for selected session
+			if m.cursor < len(m.sessions) {
+				name := m.sessions[m.cursor].Session.Name
+				currentMode := m.autoApprove[name]
+
+				if currentMode == AutoNoDelete {
+					// Turn off
+					m.autoApprove[name] = AutoOff
+					delete(m.burstMode, name)
+					m.actionStatus = fmt.Sprintf("AUTO OFF: %s", name)
+				} else {
+					// Turn on NODELETE (or switch from SAFE/ALL)
+					m.autoApprove[name] = AutoNoDelete
+					m.actionStatus = fmt.Sprintf("AUTO NODEL: %s (skip deletes)", name)
 				}
 				m.actionTime = time.Now()
 			}
@@ -748,6 +895,38 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			// Toggle expanded preview for current session
 			if m.cursor < len(m.sessions) {
 				m.showPreview = !m.showPreview
+			}
+
+		case key.Matches(msg, keys.SendText):
+			// Enter text input mode for selected session
+			if m.cursor < len(m.sessions) {
+				m.inputMode = true
+				m.textInput.Focus()
+				m.textInput.SetValue("")
+				return m, m.textInput.Cursor.BlinkCmd()
+			}
+
+		case key.Matches(msg, keys.RenameSession):
+			// Rename selected session to basename(cwd)-MMddHHmm
+			if m.cursor < len(m.sessions) {
+				session := m.sessions[m.cursor]
+				cwd := session.CWD
+				if cwd == "" || cwd == "unknown" {
+					m.actionStatus = "Cannot rename: no CWD"
+					m.actionTime = time.Now()
+					return m, nil
+				}
+				existingNames, err := tmux.ListSessionNames()
+				if err != nil {
+					m.actionStatus = fmt.Sprintf("Rename error: %v", err)
+					m.actionTime = time.Now()
+					return m, nil
+				}
+				newName := generateSessionName(cwd, existingNames)
+				oldName := session.Session.Name
+				m.actionStatus = fmt.Sprintf("renaming: %s -> %s", oldName, newName)
+				m.actionTime = time.Now()
+				return m, renameSessionCmd(oldName, newName)
 			}
 
 		case key.Matches(msg, keys.ToggleView):
@@ -910,13 +1089,21 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			shouldApprove := false
 			skipReason := ""
 
-			if mode == AutoAll {
+			switch mode {
+			case AutoAll:
 				// Approve everything
 				shouldApprove = true
-			} else if mode == AutoSafe {
+			case AutoSafe:
 				// Approve unless it's a destructive command
 				if isDestructiveCommand(session.Request) {
 					skipReason = "destructive"
+				} else {
+					shouldApprove = true
+				}
+			case AutoNoDelete:
+				// Approve unless it deletes files/folders/db records
+				if isDeleteCommand(session.Request) {
+					skipReason = "delete"
 				} else {
 					shouldApprove = true
 				}
@@ -1204,7 +1391,17 @@ func (m Model) View() string {
 		sections = append(sections, m.renderMainContent(width, availableHeight))
 	}
 
-	if !helpAtTop && helpBar != "" {
+	if m.inputMode {
+		// Render text input bar instead of help bar
+		sessionName := ""
+		if m.cursor < len(m.sessions) {
+			sessionName = m.sessions[m.cursor].Session.Name
+		}
+		inputLabel := statusAccent.Bold(true).Render(" INPUT ") +
+			detailLabelStyle.Render(fmt.Sprintf(" -> %s ", sessionName))
+		inputBar := inputLabel + m.textInput.View()
+		sections = append(sections, helpStyle.Render(inputBar))
+	} else if !helpAtTop && helpBar != "" {
 		sections = append(sections, helpBar)
 	}
 
@@ -1229,11 +1426,14 @@ func (m Model) renderLogView(width, height int) string {
 
 	// Count auto-approve sessions by mode
 	safeCount := 0
+	nodelCount := 0
 	allCount := 0
 	for _, mode := range m.autoApprove {
 		switch mode {
 		case AutoSafe:
 			safeCount++
+		case AutoNoDelete:
+			nodelCount++
 		case AutoAll:
 			allCount++
 		}
@@ -1241,10 +1441,11 @@ func (m Model) renderLogView(width, height int) string {
 
 	lines = append(lines, "")
 	lines = append(lines, dividerStyle.Render(strings.Repeat("─", width-4)))
-	lines = append(lines, fmt.Sprintf("  Auto-approve: %d SAFE, %d ALL", safeCount, allCount))
+	lines = append(lines, fmt.Sprintf("  Auto-approve: %d SAFE, %d NODEL, %d ALL", safeCount, nodelCount, allCount))
 	lines = append(lines, fmt.Sprintf("  Log file: %s", logFilePath()))
 	lines = append(lines, "")
-	lines = append(lines, detailLabelStyle.Render("  SAFE mode skips destructive commands (rm -rf, git push --force, etc.)"))
+	lines = append(lines, detailLabelStyle.Render("  SAFE skips all destructive commands (rm -rf, git push --force, etc.)"))
+	lines = append(lines, detailLabelStyle.Render("  NODEL skips delete commands only (rm, DROP TABLE, DELETE FROM, etc.)"))
 
 	return lipgloss.JoinVertical(lipgloss.Left, lines...)
 }
@@ -1449,7 +1650,7 @@ func (m Model) renderHeader(width int) string {
 			actionLine = statusApproved.Render("  " + m.actionStatus)
 		case strings.HasPrefix(m.actionStatus, "denied"):
 			actionLine = statusDenied.Render("  " + m.actionStatus)
-		case strings.HasPrefix(m.actionStatus, "AUTO SAFE"), strings.HasPrefix(m.actionStatus, "AUTO ALL"):
+		case strings.HasPrefix(m.actionStatus, "AUTO SAFE"), strings.HasPrefix(m.actionStatus, "AUTO NODEL"), strings.HasPrefix(m.actionStatus, "AUTO ALL"):
 			actionLine = statusAuto.Render("  " + m.actionStatus)
 		case strings.HasPrefix(m.actionStatus, "AUTO OFF"):
 			actionLine = statusIdle.Render("  " + m.actionStatus)
@@ -1808,13 +2009,14 @@ func (m Model) getColumnValues(session detector.WaitingSession, isWaiting bool, 
 	if autoMode != AutoOff {
 		if isBurst {
 			if isMini {
-				statusText = autoMode.String()[0:1] + "B" // "SB" or "AB"
+				mini := autoMode.String()[0:1] // "S", "N", or "A"
+				statusText = mini + "B"
 			} else {
 				statusText = autoMode.String() + "+B"
 			}
 		} else {
 			if isMini {
-				statusText = autoMode.String()[0:1] // "S" or "A"
+				statusText = autoMode.String()[0:1] // "S", "N", or "A"
 			} else {
 				statusText = autoMode.String()
 			}
@@ -2230,6 +2432,7 @@ func (m Model) renderHelpBar(width int, mode helpMode, isMini bool) string {
 			item("[a]", "approve"),
 			item("[s]", "always"),
 			item("[d]", "deny"),
+			item("[i]", "input"),
 			item("[p]", "preview"),
 			item("[v]", "view"),
 			item("[l]", "log"),
@@ -2237,7 +2440,9 @@ func (m Model) renderHelpBar(width int, mode helpMode, isMini bool) string {
 		line2 := []string{
 			item("[t]", "auto"),
 			item("[T]", "mode"),
+			item("[x]", "nodelete"),
 			item("[b]", "burst"),
+			item("[R]", "rename"),
 			item("[g]", "git"),
 			item("[c]", "ctx"),
 			item("[M]", "agent"),
@@ -2249,6 +2454,7 @@ func (m Model) renderHelpBar(width int, mode helpMode, isMini bool) string {
 			item("[a]", "approve"),
 			item("[s]", "always"),
 			item("[d]", "deny"),
+			item("[i]", "input"),
 			item("[p]", "preview"),
 			item("[v]", "view"),
 			item("[l]", "log"),
@@ -2256,7 +2462,9 @@ func (m Model) renderHelpBar(width int, mode helpMode, isMini bool) string {
 		line2 := []string{
 			item("[t]", "auto"),
 			item("[T]", "mode"),
+			item("[x]", "nodelete"),
 			item("[b]", "burst"),
+			item("[R]", "rename"),
 			item("[g]", "git"),
 			item("[c]", "ctx"),
 			item("[M]", "agent"),
