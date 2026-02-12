@@ -116,6 +116,30 @@ func SendEnter(sessionName string) error {
 	return err
 }
 
+// SendText sends literal text to a tmux session (using -l flag for safety)
+func SendText(sessionName string, text string) error {
+	_, err := runCmd("tmux", "send-keys", "-t", sessionName, "-l", text)
+	return err
+}
+
+// RenameSession renames a tmux session
+func RenameSession(oldName, newName string) error {
+	_, err := runCmd("tmux", "rename-session", "-t", oldName, newName)
+	return err
+}
+
+// ListSessionNames returns just the names of all tmux sessions
+func ListSessionNames() ([]string, error) {
+	output, err := runCmd("tmux", "list-sessions", "-F", "#{session_name}")
+	if err != nil {
+		return nil, err
+	}
+	if output == "" {
+		return nil, nil
+	}
+	return strings.Split(output, "\n"), nil
+}
+
 // IsRunning checks if tmux server is running
 func IsRunning() bool {
 	_, err := runCmd("tmux", "list-sessions")
