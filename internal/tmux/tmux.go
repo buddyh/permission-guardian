@@ -140,6 +140,66 @@ func ListSessionNames() ([]string, error) {
 	return strings.Split(output, "\n"), nil
 }
 
+// ProcessSnapshot holds a single ps call's data for all processes
+type ProcessSnapshot struct {
+	rss      map[int]int   // pid -> RSS in KB
+	children map[int][]int // ppid -> child pids
+}
+
+// snapshotProcesses runs ONE ps call and builds a lookup table
+func snapshotProcesses() *ProcessSnapshot {
+	output, err := runCmd("ps", "-eo", "pid=,ppid=,rss=")
+	if err != nil {
+		return &ProcessSnapshot{rss: map[int]int{}, children: map[int][]int{}}
+	}
+	snap := &ProcessSnapshot{
+		rss:      make(map[int]int),
+		children: make(map[int][]int),
+	}
+	for _, line := range strings.Split(output, "\n") {
+		fields := strings.Fields(line)
+		if len(fields) < 3 {
+			continue
+		}
+		pid, _ := strconv.Atoi(fields[0])
+		ppid, _ := strconv.Atoi(fields[1])
+		rss, _ := strconv.Atoi(fields[2])
+		snap.rss[pid] = rss
+		snap.children[ppid] = append(snap.children[ppid], pid)
+	}
+	return snap
+}
+
+// treeRSS sums RSS for a pid and all descendants using the snapshot
+func (s *ProcessSnapshot) treeRSS(pid int) int {
+	total := s.rss[pid]
+	for _, child := range s.children[pid] {
+		total += s.treeRSS(child)
+	}
+	return total
+}
+
+// GetProcessTreeMemoryMB returns total RSS in MB for a PID and all its descendants
+func GetProcessTreeMemoryMB(pid int) int {
+	return GetProcessTreeMemoryMBFromSnapshot(pid, snapshotProcesses())
+}
+
+// GetProcessTreeMemoryMBFromSnapshot uses a pre-built snapshot (avoids repeated ps calls)
+func GetProcessTreeMemoryMBFromSnapshot(pid int, snap *ProcessSnapshot) int {
+	return snap.treeRSS(pid) / 1024
+}
+
+// SnapshotProcesses exports snapshot creation for batch use by callers
+func SnapshotProcesses() *ProcessSnapshot {
+	return snapshotProcesses()
+}
+
+// KillSession kills a tmux session
+func KillSession(sessionName string) error {
+	_, err := runCmd("tmux", "kill-session", "-t", sessionName)
+	return err
+}
+
 // IsRunning checks if tmux server is running
 func IsRunning() bool {
 	_, err := runCmd("tmux", "list-sessions")

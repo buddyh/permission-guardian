@@ -58,6 +58,7 @@ type WaitingSession struct {
 	StyledContent string // ANSI-styled content for preview
 	CWD           string
 	Info          SessionInfo
+	MemoryMB      int // Total RSS of session process tree in MB
 }
 
 // Status represents the current status of a session
@@ -677,6 +678,9 @@ func GetAllAgentSessions(captureLines int) ([]WaitingSession, error) {
 
 	var agentSessions []WaitingSession
 
+	// Single process snapshot for all memory lookups
+	psSnap := tmux.SnapshotProcesses()
+
 	for _, session := range sessions {
 		// Get pane PID
 		panePID, err := tmux.GetPanePID(session.Name)
@@ -719,6 +723,8 @@ func GetAllAgentSessions(captureLines int) ([]WaitingSession, error) {
 		// Capture styled content for preview (with ANSI codes)
 		styledContent, _ := tmux.CapturePaneStyled(session.Name, 20)
 
+		memMB := tmux.GetProcessTreeMemoryMBFromSnapshot(panePID, psSnap)
+
 		agentSessions = append(agentSessions, WaitingSession{
 			Session:       session,
 			Agent:         agent,
@@ -728,6 +734,7 @@ func GetAllAgentSessions(captureLines int) ([]WaitingSession, error) {
 			StyledContent: styledContent,
 			CWD:           cwd,
 			Info:          info,
+			MemoryMB:      memMB,
 		})
 	}
 

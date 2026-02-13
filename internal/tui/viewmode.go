@@ -50,6 +50,7 @@ const (
 	ColTime
 	ColModel
 	ColCtx
+	ColMem
 	ColGit
 	ColDir
 	ColRequest
@@ -72,6 +73,7 @@ var DefaultColumns = []ColumnDef{
 	{ID: ColTime, Header: "TIME", Width: 7, MinWidth: 85, Priority: 3},
 	{ID: ColModel, Header: "AGENT", Width: 7, MinWidth: 100, Priority: 6},
 	{ID: ColCtx, Header: "CTX", Width: 6, MinWidth: 0, Priority: 3},
+	{ID: ColMem, Header: "MEM", Width: 5, MinWidth: 95, Priority: 5},
 	{ID: ColGit, Header: "GIT", Width: 14, MinWidth: 110, Priority: 5},
 	{ID: ColDir, Header: "DIRECTORY", Width: 25, MinWidth: 80, Priority: 4},
 	{ID: ColRequest, Header: "REQUEST", Width: 0, MinWidth: 0, Priority: 0}, // Flexible width
