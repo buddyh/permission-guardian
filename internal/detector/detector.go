@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"os/exec"
 	"regexp"
+	"strconv"
 	"strings"
 
 	"github.com/buddyh/permission-guardian/internal/tmux"
@@ -58,7 +59,6 @@ type WaitingSession struct {
 	StyledContent string // ANSI-styled content for preview
 	CWD           string
 	Info          SessionInfo
-	MemoryMB      int // Total RSS of session process tree in MB
 }
 
 // Status represents the current status of a session
@@ -121,12 +121,39 @@ var (
 	codexContextPattern = regexp.MustCompile(`(\d+)%\s*context\s*left`)
 )
 
-// DetectAgent checks if a pane is running Claude Code or Codex
-func DetectAgent(panePID int) AgentType {
-	// Check the process itself
-	cmd := getProcessCommand(panePID)
-	cmdLower := strings.ToLower(cmd)
+// processTable holds a single ps snapshot with commands and parent-child relationships
+type processTable struct {
+	commands map[int]string // pid -> command string
+	children map[int][]int  // ppid -> child pids
+}
 
+// snapshotProcessTable runs ONE ps call and builds a lookup table
+func snapshotProcessTable() *processTable {
+	out, err := exec.Command("ps", "-eo", "pid=,ppid=,command=").Output()
+	if err != nil {
+		return &processTable{commands: map[int]string{}, children: map[int][]int{}}
+	}
+	pt := &processTable{
+		commands: make(map[int]string),
+		children: make(map[int][]int),
+	}
+	for _, line := range strings.Split(string(out), "\n") {
+		fields := strings.Fields(line)
+		if len(fields) < 3 {
+			continue
+		}
+		pid, _ := strconv.Atoi(fields[0])
+		ppid, _ := strconv.Atoi(fields[1])
+		pt.commands[pid] = strings.Join(fields[2:], " ")
+		pt.children[ppid] = append(pt.children[ppid], pid)
+	}
+	return pt
+}
+
+// detectAgentFromTable checks if a pane PID is running Claude or Codex using the snapshot
+func detectAgentFromTable(panePID int, pt *processTable) AgentType {
+	// Check the process itself
+	cmdLower := strings.ToLower(pt.commands[panePID])
 	if strings.Contains(cmdLower, "claude") {
 		return AgentClaude
 	}
@@ -135,9 +162,8 @@ func DetectAgent(panePID int) AgentType {
 	}
 
 	// Check child processes
-	children := getChildCommands(panePID)
-	for _, child := range children {
-		childLower := strings.ToLower(child)
+	for _, childPID := range pt.children[panePID] {
+		childLower := strings.ToLower(pt.commands[childPID])
 		if strings.Contains(childLower, "claude") {
 			return AgentClaude
 		}
@@ -149,31 +175,9 @@ func DetectAgent(panePID int) AgentType {
 	return AgentUnknown
 }
 
-func getProcessCommand(pid int) string {
-	out, err := exec.Command("ps", "-o", "command=", "-p", fmt.Sprintf("%d", pid)).Output()
-	if err != nil {
-		return ""
-	}
-	return strings.TrimSpace(string(out))
-}
-
-func getChildCommands(pid int) []string {
-	out, err := exec.Command("pgrep", "-P", fmt.Sprintf("%d", pid)).Output()
-	if err != nil {
-		return nil
-	}
-
-	var cmds []string
-	for _, line := range strings.Split(strings.TrimSpace(string(out)), "\n") {
-		if line == "" {
-			continue
-		}
-		cmd := getProcessCommand(mustAtoi(line))
-		if cmd != "" {
-			cmds = append(cmds, cmd)
-		}
-	}
-	return cmds
+// DetectAgent checks if a pane is running Claude Code or Codex (standalone, creates its own snapshot)
+func DetectAgent(panePID int) AgentType {
+	return detectAgentFromTable(panePID, snapshotProcessTable())
 }
 
 func mustAtoi(s string) int {
@@ -678,8 +682,8 @@ func GetAllAgentSessions(captureLines int) ([]WaitingSession, error) {
 
 	var agentSessions []WaitingSession
 
-	// Single process snapshot for all memory lookups
-	psSnap := tmux.SnapshotProcesses()
+	// Single process snapshot for all agent detection (replaces ~100 subprocess calls)
+	pt := snapshotProcessTable()
 
 	for _, session := range sessions {
 		// Get pane PID
@@ -689,7 +693,7 @@ func GetAllAgentSessions(captureLines int) ([]WaitingSession, error) {
 		}
 
 		// Check if it's Claude or Codex
-		agent := DetectAgent(panePID)
+		agent := detectAgentFromTable(panePID, pt)
 		if agent == AgentUnknown {
 			continue
 		}
@@ -723,8 +727,6 @@ func GetAllAgentSessions(captureLines int) ([]WaitingSession, error) {
 		// Capture styled content for preview (with ANSI codes)
 		styledContent, _ := tmux.CapturePaneStyled(session.Name, 20)
 
-		memMB := tmux.GetProcessTreeMemoryMBFromSnapshot(panePID, psSnap)
-
 		agentSessions = append(agentSessions, WaitingSession{
 			Session:       session,
 			Agent:         agent,
@@ -734,7 +736,6 @@ func GetAllAgentSessions(captureLines int) ([]WaitingSession, error) {
 			StyledContent: styledContent,
 			CWD:           cwd,
 			Info:          info,
-			MemoryMB:      memMB,
 		})
 	}
 
