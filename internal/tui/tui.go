@@ -169,6 +169,7 @@ type keyMap struct {
 	Preview          key.Binding
 	SendText         key.Binding
 	RenameSession    key.Binding
+	KillSession      key.Binding
 	ToggleGit        key.Binding
 	ToggleCtx        key.Binding
 	ToggleModel      key.Binding
@@ -235,6 +236,10 @@ var keys = keyMap{
 	RenameSession: key.NewBinding(
 		key.WithKeys("R"),
 		key.WithHelp("R", "rename"),
+	),
+	KillSession: key.NewBinding(
+		key.WithKeys("K"),
+		key.WithHelp("K", "kill"),
 	),
 	ToggleGit: key.NewBinding(
 		key.WithKeys("g"),
@@ -407,6 +412,9 @@ type Model struct {
 	// Text input mode
 	inputMode bool
 	textInput textinput.Model
+	// Kill confirmation (K-K within 2 seconds)
+	killConfirmSession string
+	killConfirmTime    time.Time
 	// View mode (compact/expanded)
 	viewMode ViewMode
 	// Hidden columns (user can toggle)
@@ -626,6 +634,15 @@ func sendTextToSession(sessionName, text string) tea.Cmd {
 			return actionMsg{session: sessionName, action: "send text", err: err}
 		}
 		return actionMsg{session: sessionName, action: "sent to", err: nil}
+	}
+}
+
+func killSessionCmd(sessionName string) tea.Cmd {
+	return func() tea.Msg {
+		if err := tmux.KillSession(sessionName); err != nil {
+			return actionMsg{session: sessionName, action: "kill", err: err}
+		}
+		return actionMsg{session: sessionName, action: "killed", err: nil}
 	}
 }
 
@@ -927,6 +944,23 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				m.actionStatus = fmt.Sprintf("renaming: %s -> %s", oldName, newName)
 				m.actionTime = time.Now()
 				return m, renameSessionCmd(oldName, newName)
+			}
+
+		case key.Matches(msg, keys.KillSession):
+			if m.cursor < len(m.sessions) {
+				sessionName := m.sessions[m.cursor].Session.Name
+				if m.killConfirmSession == sessionName && time.Since(m.killConfirmTime) < 2*time.Second {
+					// Second K within 2s — kill it
+					m.killConfirmSession = ""
+					m.actionStatus = fmt.Sprintf("killing: %s", sessionName)
+					m.actionTime = time.Now()
+					return m, killSessionCmd(sessionName)
+				}
+				// First K — arm confirmation
+				m.killConfirmSession = sessionName
+				m.killConfirmTime = time.Now()
+				m.actionStatus = fmt.Sprintf("Press K again to kill: %s", sessionName)
+				m.actionTime = time.Now()
 			}
 
 		case key.Matches(msg, keys.ToggleView):
@@ -2090,6 +2124,28 @@ func (m Model) getColumnValues(session detector.WaitingSession, isWaiting bool, 
 	ctxWidth := GetColumnWidth(columns, ColCtx)
 	values[ColCtx] = ColumnValue{renderContextBar(session.Info.ContextSize, ctxWidth), lipgloss.NewStyle()}
 
+	// MEM
+	var memText string
+	var memStyle lipgloss.Style
+	if session.MemoryMB > 0 {
+		if session.MemoryMB >= 1024 {
+			memText = fmt.Sprintf("%.1fG", float64(session.MemoryMB)/1024)
+		} else {
+			memText = fmt.Sprintf("%dM", session.MemoryMB)
+		}
+		if session.MemoryMB > 400 {
+			memStyle = lipgloss.NewStyle().Foreground(colorError)
+		} else if session.MemoryMB > 200 {
+			memStyle = lipgloss.NewStyle().Foreground(colorWarning)
+		} else {
+			memStyle = detailLabelStyle
+		}
+	} else {
+		memText = "-"
+		memStyle = statusIdle
+	}
+	values[ColMem] = ColumnValue{memText, memStyle}
+
 	// GIT
 	git := strings.TrimSpace(session.Info.GitBranch)
 	if git == "" || git == "no" {
@@ -2443,6 +2499,7 @@ func (m Model) renderHelpBar(width int, mode helpMode, isMini bool) string {
 			item("[x]", "nodelete"),
 			item("[b]", "burst"),
 			item("[R]", "rename"),
+			item("[K]", "kill"),
 			item("[g]", "git"),
 			item("[c]", "ctx"),
 			item("[M]", "agent"),
@@ -2465,6 +2522,7 @@ func (m Model) renderHelpBar(width int, mode helpMode, isMini bool) string {
 			item("[x]", "nodelete"),
 			item("[b]", "burst"),
 			item("[R]", "rename"),
+			item("[K]", "kill"),
 			item("[g]", "git"),
 			item("[c]", "ctx"),
 			item("[M]", "agent"),
