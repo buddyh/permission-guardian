@@ -2124,28 +2124,6 @@ func (m Model) getColumnValues(session detector.WaitingSession, isWaiting bool, 
 	ctxWidth := GetColumnWidth(columns, ColCtx)
 	values[ColCtx] = ColumnValue{renderContextBar(session.Info.ContextSize, ctxWidth), lipgloss.NewStyle()}
 
-	// MEM
-	var memText string
-	var memStyle lipgloss.Style
-	if session.MemoryMB > 0 {
-		if session.MemoryMB >= 1024 {
-			memText = fmt.Sprintf("%.1fG", float64(session.MemoryMB)/1024)
-		} else {
-			memText = fmt.Sprintf("%dM", session.MemoryMB)
-		}
-		if session.MemoryMB > 400 {
-			memStyle = lipgloss.NewStyle().Foreground(colorError)
-		} else if session.MemoryMB > 200 {
-			memStyle = lipgloss.NewStyle().Foreground(colorWarning)
-		} else {
-			memStyle = detailLabelStyle
-		}
-	} else {
-		memText = "-"
-		memStyle = statusIdle
-	}
-	values[ColMem] = ColumnValue{memText, memStyle}
-
 	// GIT
 	git := strings.TrimSpace(session.Info.GitBranch)
 	if git == "" || git == "no" {

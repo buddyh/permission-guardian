@@ -53,9 +53,9 @@ func TestGetVisibleColumns(t *testing.T) {
 		{
 			name:     "very wide terminal",
 			width:    200,
-			wantMin:  10,
-			wantMax:  10,
-			mustHave: []Column{ColNum, ColName, ColStatus, ColTime, ColModel, ColCtx, ColMem, ColGit, ColDir, ColRequest},
+			wantMin:  9,
+			wantMax:  9,
+			mustHave: []Column{ColNum, ColName, ColStatus, ColTime, ColModel, ColCtx, ColGit, ColDir, ColRequest},
 		},
 		{
 			name:     "normal terminal",
