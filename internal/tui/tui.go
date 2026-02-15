@@ -1021,6 +1021,9 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			sessionStates[s.Session.Name] = s
 		}
 
+		// Process any control files (IPC from Claude Code skills)
+		m.processControlFiles()
+
 		// Task timer tracking - track active sessions and detect idle
 		const idleGracePeriod = 10 * time.Second
 		for _, session := range m.sessions {
@@ -2557,4 +2560,56 @@ func (m Model) renderHelpBar(width int, mode helpMode, isMini bool) string {
 		return ""
 	}
 	return helpStyle.Padding(0, pad).Render(strings.Join(rendered, "\n"))
+}
+
+// processControlFiles reads control files written by external tools (e.g. Claude Code skills)
+// to set auto-approve modes. Each file is named after a session, contents = mode string.
+func (m *Model) processControlFiles() {
+	home, err := os.UserHomeDir()
+	if err != nil {
+		return
+	}
+	controlDir := filepath.Join(home, ".config", "permission-guardian", "control")
+
+	entries, err := os.ReadDir(controlDir)
+	if err != nil {
+		return // dir doesn't exist yet — normal
+	}
+
+	for _, entry := range entries {
+		if entry.IsDir() {
+			continue
+		}
+		sessionName := entry.Name()
+		filePath := filepath.Join(controlDir, sessionName)
+
+		data, err := os.ReadFile(filePath)
+		os.Remove(filePath) // always clean up
+		if err != nil {
+			continue
+		}
+
+		modeStr := strings.TrimSpace(string(data))
+		var mode AutoMode
+		switch modeStr {
+		case "safe":
+			mode = AutoSafe
+		case "all":
+			mode = AutoAll
+		case "nodelete":
+			mode = AutoNoDelete
+		case "off":
+			mode = AutoOff
+			delete(m.burstMode, sessionName)
+		default:
+			continue // unknown mode — skip silently
+		}
+
+		m.autoApprove[sessionName] = mode
+		if mode == AutoOff {
+			delete(m.autoApprove, sessionName)
+		}
+		m.actionStatus = fmt.Sprintf("AUTO %s: %s (via control file)", mode, sessionName)
+		m.actionTime = time.Now()
+	}
 }
