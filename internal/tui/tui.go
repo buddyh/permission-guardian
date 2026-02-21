@@ -581,8 +581,10 @@ func tickCmd(d time.Duration) tea.Cmd {
 	})
 }
 
+const paneCaptureLines = 120
+
 func fetchSessions() tea.Msg {
-	sessions, err := detector.GetAllAgentSessions(50)
+	sessions, err := detector.GetAllAgentSessions(paneCaptureLines)
 	return sessionsMsg{sessions: sessions, err: err}
 }
 

@@ -1,6 +1,7 @@
 package detector
 
 import (
+	"strings"
 	"testing"
 )
 
@@ -43,6 +44,15 @@ func TestHasPermissionPrompt(t *testing.T) {
 		{
 			name:     "codex prompt with selector",
 			content:  "Would you like to run the following command?\n$ ls -la\n› 1. Yes, proceed (y)\n  2. No",
+			expected: true,
+		},
+		{
+			name: "long multiline command prompt with warning",
+			content: strings.Repeat("line\n", 30) +
+				"Command contains newlines that could separate multiple commands\n" +
+				"Do you want to proceed?\n" +
+				"❯ 1. Yes\n" +
+				"  2. No",
 			expected: true,
 		},
 		{
@@ -132,6 +142,24 @@ func TestDetectPromptType(t *testing.T) {
 			name:     "unknown",
 			content:  "Some other prompt type",
 			expected: PromptUnknown,
+		},
+		{
+			name: "long multiline prompt where bash header scrolled away",
+			content: "Bash command\n" +
+				strings.Repeat("  python3 -c \"do thing\"\n", 60) +
+				"Command contains newlines that could separate multiple commands\n" +
+				"Do you want to proceed?\n" +
+				"❯ 1. Yes\n" +
+				"  2. No",
+			expected: PromptBash,
+		},
+		{
+			name: "generic allow prompt fallback with active selector",
+			content: strings.Repeat("output\n", 40) +
+				"Do you want to allow this action?\n" +
+				"› 1. Yes, proceed\n" +
+				"  2. No",
+			expected: PromptBash,
 		},
 	}
 
@@ -320,6 +348,15 @@ More context
 Even more
 Do you want to proceed?`,
 			promptType:   PromptUnknown,
+			wantNonEmpty: true,
+		},
+		{
+			name: "bash request falls back when header missing",
+			content: `# command tail
+python3 -c "print('hi')"
+Command contains newlines that could separate multiple commands
+Do you want to proceed?`,
+			promptType:   PromptBash,
 			wantNonEmpty: true,
 		},
 	}

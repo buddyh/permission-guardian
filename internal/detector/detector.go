@@ -74,7 +74,9 @@ const (
 var promptPatterns = []*regexp.Regexp{
 	regexp.MustCompile(`Do you want to proceed\?`),
 	regexp.MustCompile(`Do you want to allow`),
+	regexp.MustCompile(`Do you want to grant`),
 	regexp.MustCompile(`Would you like to run`),
+	regexp.MustCompile(`Command contains newlines that could separate multiple commands`),
 	regexp.MustCompile(`[❯>›]\s*1\.\s*Yes`), // Match ❯, >, and › (Codex uses ›)
 	regexp.MustCompile(`Yes, and don't ask again`),
 	regexp.MustCompile(`Yes, during this session`), // Another common option
@@ -196,8 +198,9 @@ func getRecentLines(content string, n int) string {
 	return strings.Join(lines[len(lines)-n:], "\n")
 }
 
-// Active selection indicators - these only appear when prompt is active
-var activeSelectionPattern = regexp.MustCompile(`(?m)^[\s]*[❯>›]\s*[123]\.\s*`)
+// Active selection indicators - these only appear when prompt is active.
+// Some clients render "1." while others can use "1)".
+var activeSelectionPattern = regexp.MustCompile(`(?m)^[\s]*[❯>›]\s*\d+[\.\)]\s*`)
 
 // HasPermissionPrompt checks if content contains a permission prompt
 // Only checks recent lines to avoid matching stale prompts in scrollback
@@ -225,8 +228,8 @@ func HasPermissionPrompt(content string) bool {
 // DetectPromptType determines what type of permission is being requested
 // Uses recent content to avoid matching stale prompts in scrollback
 func DetectPromptType(content string) PromptType {
-	// Only check last 35 lines for prompt type detection
-	recent := getRecentLines(content, 35)
+	// Check a slightly larger window to handle long multiline commands.
+	recent := getRecentLines(content, 80)
 
 	// Check for plan mode FIRST - has numbered options but is NOT a permission prompt
 	// Key identifier: "Tab/Arrow keys to navigate · Esc to cancel"
@@ -270,6 +273,24 @@ func DetectPromptType(content string) PromptType {
 	if strings.Contains(recent, "Task(") {
 		return PromptTask
 	}
+
+	// Fallback for long command prompts where the "Bash command" header
+	// can scroll out of the recent window while prompt controls remain visible.
+	if strings.Contains(recent, "Command contains newlines that could separate multiple commands") ||
+		strings.Contains(recent, "Tab to amend") ||
+		strings.Contains(recent, "ctrl+e to explain") {
+		return PromptBash
+	}
+
+	// Last resort: treat generic active proceed/allow prompts as command prompts.
+	// This keeps auto-approve modes working even when tool-type headers are truncated.
+	if HasPermissionPrompt(recent) &&
+		(strings.Contains(recent, "Do you want to proceed") ||
+			strings.Contains(recent, "Do you want to allow") ||
+			strings.Contains(recent, "Would you like to run")) {
+		return PromptBash
+	}
+
 	return PromptUnknown
 }
 
@@ -410,7 +431,13 @@ func extractBashRequest(lines []string) string {
 	if len(result) > 10 {
 		result = result[:10]
 	}
-	return strings.Join(result, " ")
+	if len(result) > 0 {
+		return strings.Join(result, " ")
+	}
+
+	// Fallback for long multiline prompts where the "Bash command" header
+	// is no longer in capture but the prompt itself is still active.
+	return strings.TrimSpace(extractFallbackRequest(lines))
 }
 
 func extractFetchRequest(lines []string) string {
@@ -460,8 +487,8 @@ func extractEditRequest(lines []string) string {
 
 func extractFallbackRequest(lines []string) string {
 	for i, line := range lines {
-		if strings.Contains(line, "Do you want") {
-			start := max(0, i-5)
+		if strings.Contains(line, "Do you want") || strings.Contains(line, "Would you like to run") {
+			start := max(0, i-8)
 			return strings.Join(lines[start:i], " ")
 		}
 	}
