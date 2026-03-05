@@ -76,7 +76,7 @@ var promptPatterns = []*regexp.Regexp{
 	regexp.MustCompile(`Do you want to allow`),
 	regexp.MustCompile(`Do you want to grant`),
 	regexp.MustCompile(`Would you like to run`),
-	regexp.MustCompile(`Command contains newlines that could separate multiple commands`),
+	regexp.MustCompile(`Command contains `),
 	regexp.MustCompile(`[❯>›]\s*1\.\s*Yes`), // Match ❯, >, and › (Codex uses ›)
 	regexp.MustCompile(`Yes, and don't ask again`),
 	regexp.MustCompile(`Yes, during this session`), // Another common option
@@ -276,7 +276,7 @@ func DetectPromptType(content string) PromptType {
 
 	// Fallback for long command prompts where the "Bash command" header
 	// can scroll out of the recent window while prompt controls remain visible.
-	if strings.Contains(recent, "Command contains newlines that could separate multiple commands") ||
+	if strings.Contains(recent, "Command contains") ||
 		strings.Contains(recent, "Tab to amend") ||
 		strings.Contains(recent, "ctrl+e to explain") {
 		return PromptBash

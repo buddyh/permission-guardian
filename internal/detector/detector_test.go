@@ -154,6 +154,16 @@ func TestDetectPromptType(t *testing.T) {
 			expected: PromptBash,
 		},
 		{
+			name: "consecutive quote obfuscation warning",
+			content: strings.Repeat("  python3 << 'EOF'\n", 20) +
+				"Command contains consecutive quote characters at word start (potential obfuscation)\n" +
+				"\n" +
+				"Do you want to proceed?\n" +
+				"❯ 1. Yes\n" +
+				"  2. No",
+			expected: PromptBash,
+		},
+		{
 			name: "generic allow prompt fallback with active selector",
 			content: strings.Repeat("output\n", 40) +
 				"Do you want to allow this action?\n" +
