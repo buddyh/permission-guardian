@@ -1364,10 +1364,10 @@ func (m Model) shouldUseMiniMode(width int) bool {
 
 // shouldUseFullHeader returns true when we have room for the full header.
 func (m Model) shouldUseFullHeader(width, height int) bool {
-	if m.viewMode != ViewExpanded {
+	if m.viewMode == ViewMini {
 		return false
 	}
-	return width >= 90 && height >= 18
+	return width >= 90 && height >= 16
 }
 
 func (m Model) View() string {
