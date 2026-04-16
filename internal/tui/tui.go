@@ -2497,7 +2497,6 @@ func (m Model) renderHelpBar(width int, mode helpMode, isMini bool) string {
 			item("[R]", "rename"),
 			item("[K]", "kill"),
 			item("[g]", "git"),
-			item("[c]", "ctx"),
 			item("[M]", "agent"),
 			item("[q]", "quit"),
 		}
@@ -2525,7 +2524,6 @@ func (m Model) renderHelpBar(width int, mode helpMode, isMini bool) string {
 			item("[R]", "rename"),
 			item("[K]", "kill"),
 			item("[g]", "git"),
-			item("[c]", "ctx"),
 			item("[M]", "agent"),
 			item("[q]", "quit"),
 		}
