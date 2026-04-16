@@ -4,6 +4,7 @@ package detector
 import (
 	"fmt"
 	"os/exec"
+	"path/filepath"
 	"regexp"
 	"strconv"
 	"strings"
@@ -152,26 +153,48 @@ func snapshotProcessTable() *processTable {
 	return pt
 }
 
-// detectAgentFromTable checks if a pane PID is running Claude or Codex using the snapshot
-func detectAgentFromTable(panePID int, pt *processTable) AgentType {
-	// Check the process itself
-	cmdLower := strings.ToLower(pt.commands[panePID])
-	if strings.Contains(cmdLower, "claude") {
-		return AgentClaude
-	}
-	if strings.Contains(cmdLower, "codex") {
-		return AgentCodex
-	}
+func detectAgentFromCommand(cmd string) AgentType {
+	for _, token := range strings.Fields(strings.ToLower(cmd)) {
+		cleaned := strings.Trim(token, `"'`)
+		base := filepath.Base(cleaned)
 
-	// Check child processes
-	for _, childPID := range pt.children[panePID] {
-		childLower := strings.ToLower(pt.commands[childPID])
-		if strings.Contains(childLower, "claude") {
+		switch base {
+		case "claude", "claude-code":
 			return AgentClaude
-		}
-		if strings.Contains(childLower, "codex") {
+		case "codex":
 			return AgentCodex
 		}
+
+		switch {
+		case strings.Contains(cleaned, "@anthropic-ai/claude-code"):
+			return AgentClaude
+		case strings.Contains(cleaned, "@openai/codex"):
+			return AgentCodex
+		}
+	}
+
+	return AgentUnknown
+}
+
+// detectAgentFromTable checks if a pane PID is running Claude or Codex using the snapshot
+func detectAgentFromTable(panePID int, pt *processTable) AgentType {
+	queue := []int{panePID}
+	seen := make(map[int]bool)
+
+	for len(queue) > 0 {
+		pid := queue[0]
+		queue = queue[1:]
+
+		if seen[pid] {
+			continue
+		}
+		seen[pid] = true
+
+		if agent := detectAgentFromCommand(pt.commands[pid]); agent != AgentUnknown {
+			return agent
+		}
+
+		queue = append(queue, pt.children[pid]...)
 	}
 
 	return AgentUnknown

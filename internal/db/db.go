@@ -288,7 +288,7 @@ func (db *DB) GetStats() (map[string]interface{}, error) {
 	var todayRuns int
 	if err := db.conn.QueryRow(`
 		SELECT COUNT(*) FROM task_runs
-		WHERE date(start_time) = date('now')
+		WHERE date(start_time, 'localtime') = date('now', 'localtime')
 	`).Scan(&todayRuns); err != nil {
 		return nil, err
 	}
@@ -298,7 +298,7 @@ func (db *DB) GetStats() (map[string]interface{}, error) {
 	var todayTime int64
 	if err := db.conn.QueryRow(`
 		SELECT COALESCE(SUM(duration_seconds), 0) FROM task_runs
-		WHERE date(start_time) = date('now')
+		WHERE date(start_time, 'localtime') = date('now', 'localtime')
 	`).Scan(&todayTime); err != nil {
 		return nil, err
 	}

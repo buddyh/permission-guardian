@@ -5,6 +5,74 @@ import (
 	"testing"
 )
 
+func TestDetectAgentFromTable(t *testing.T) {
+	tests := []struct {
+		name    string
+		panePID int
+		pt      *processTable
+		want    AgentType
+	}{
+		{
+			name:    "direct claude binary",
+			panePID: 100,
+			pt: &processTable{
+				commands: map[int]string{
+					100: "/usr/local/bin/claude",
+				},
+				children: map[int][]int{},
+			},
+			want: AgentClaude,
+		},
+		{
+			name:    "grandchild codex process",
+			panePID: 100,
+			pt: &processTable{
+				commands: map[int]string{
+					100: "/bin/zsh",
+					101: "node /tmp/wrapper.js",
+					102: "/opt/homebrew/bin/codex --model gpt-5.4",
+				},
+				children: map[int][]int{
+					100: {101},
+					101: {102},
+				},
+			},
+			want: AgentCodex,
+		},
+		{
+			name:    "package-based claude command",
+			panePID: 100,
+			pt: &processTable{
+				commands: map[int]string{
+					100: "npx @anthropic-ai/claude-code@latest",
+				},
+				children: map[int][]int{},
+			},
+			want: AgentClaude,
+		},
+		{
+			name:    "avoid substring false positive",
+			panePID: 100,
+			pt: &processTable{
+				commands: map[int]string{
+					100: "python script_claude_metrics.py",
+				},
+				children: map[int][]int{},
+			},
+			want: AgentUnknown,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got := detectAgentFromTable(tt.panePID, tt.pt)
+			if got != tt.want {
+				t.Fatalf("detectAgentFromTable() = %q, want %q", got, tt.want)
+			}
+		})
+	}
+}
+
 func TestHasPermissionPrompt(t *testing.T) {
 	tests := []struct {
 		name     string

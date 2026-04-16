@@ -4,6 +4,8 @@ Thank you for your interest in contributing to Permission Guardian!
 
 ## Development Setup
 
+Prerequisite: Go 1.24+ and tmux installed locally.
+
 1. Clone the repository:
    ```bash
    git clone https://github.com/buddyh/permission-guardian.git

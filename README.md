@@ -116,7 +116,7 @@ rules:
 
 - macOS or Linux
 - tmux
-- Go 1.21+ (for building)
+- Go 1.24+ (for building)
 
 ## License
 

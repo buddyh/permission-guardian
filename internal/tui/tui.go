@@ -2194,42 +2194,45 @@ func renderContextBar(ctxSize string, width int) string {
 		return lipgloss.NewStyle().Foreground(colorTextDim).Width(width).Render("-")
 	}
 
-	// Parse context size (e.g., "133.1k" -> 133100)
-	var value float64
 	ctxSize = strings.TrimSpace(ctxSize)
-	if strings.HasSuffix(ctxSize, "k") {
-		fmt.Sscanf(ctxSize, "%fk", &value)
-		value *= 1000
-	} else {
-		fmt.Sscanf(ctxSize, "%f", &value)
+	if strings.HasSuffix(ctxSize, "%") {
+		var remainingPct float64
+		fmt.Sscanf(strings.TrimSuffix(ctxSize, "%"), "%f", &remainingPct)
+		pct := remainingPct / 100.0
+		if pct < 0 {
+			pct = 0
+		}
+		if pct > 1.0 {
+			pct = 1.0
+		}
+
+		filled := int(pct * float64(width))
+		if filled > width {
+			filled = width
+		}
+
+		bar := strings.Repeat("█", filled) + strings.Repeat("░", width-filled)
+
+		var barStyle lipgloss.Style
+		if pct < 0.2 {
+			barStyle = lipgloss.NewStyle().Foreground(colorError)
+		} else if pct < 0.4 {
+			barStyle = lipgloss.NewStyle().Foreground(colorWarning)
+		} else {
+			barStyle = lipgloss.NewStyle().Foreground(colorSuccess)
+		}
+
+		return barStyle.Width(width).Render(bar)
 	}
 
-	// Assume max context is 200k, calculate percentage
-	maxCtx := 200000.0
-	pct := value / maxCtx
-	if pct > 1.0 {
-		pct = 1.0
-	}
-
-	// Create bar
-	filled := int(pct * float64(width))
-	if filled > width {
-		filled = width
-	}
-
-	bar := strings.Repeat("█", filled) + strings.Repeat("░", width-filled)
-
-	// Color based on usage
-	var barStyle lipgloss.Style
-	if pct > 0.8 {
-		barStyle = lipgloss.NewStyle().Foreground(colorError)
-	} else if pct > 0.6 {
-		barStyle = lipgloss.NewStyle().Foreground(colorWarning)
-	} else {
-		barStyle = lipgloss.NewStyle().Foreground(colorSuccess)
-	}
-
-	return barStyle.Width(width).Render(bar)
+	// Claude reports an absolute context figure (for example "38.9k"), not a percent.
+	// We do not know the active model's true max context from terminal output alone,
+	// so showing the exact value is less misleading than a fake progress bar.
+	return lipgloss.NewStyle().
+		Foreground(colorInfo).
+		Width(width).
+		Align(lipgloss.Right).
+		Render(ctxSize)
 }
 
 // smartTruncate truncates from the middle, preserving start and end
