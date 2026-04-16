@@ -8,17 +8,19 @@ A TUI dashboard for monitoring and managing permission prompts across multiple C
 - **Quick Approval**: Approve or deny permission prompts with single keystrokes
 - **Approve + Remember**: Send "don't ask again" responses with shift+number keys
 - **Per-Session Auto-Approve**: Toggle automatic approval for specific sessions
-- **Safe Mode**: Auto-approve everything except destructive commands (rm -rf, git push --force, etc.)
+- **Explicit Auto Modes**: `SAFE`, `NODEL`, `ALL`, and `BURST` modes describe exactly what the agent can approve automatically
 - **Rules Engine**: Define custom auto-approval rules based on session, command, directory patterns
 - **Session Metadata**: View model, context size, git branch, working directory for each session
 
 ## Installation
 
+Go 1.24+ is required to build from source or install the binary. Install via:
+
 ```bash
 go install github.com/buddyh/permission-guardian/cmd/pg@latest
 ```
 
-Or build from source:
+Or build and install locally:
 
 ```bash
 git clone https://github.com/buddyh/permission-guardian.git
@@ -43,8 +45,12 @@ pg watch
 | `a` | Approve selected session |
 | `s` | Approve + don't ask again for selected |
 | `d` | Deny selected session |
-| `t` | Toggle auto-approve mode (OFF → SAFE → ALL) |
+| `t` | Toggle auto approval (`OFF` ↔ `SAFE`) |
+| `T` or `m` | Cycle auto policy (`SAFE` → `NODEL` → `ALL`) |
+| `x` | Switch the selected session to `NODEL` |
+| `b` | Toggle burst mode until the session goes idle |
 | `p` | Expand preview panel |
+| `v` | Cycle view mode |
 | `l` | View auto-approve log |
 | `j/k` or `↑/↓` | Navigate sessions |
 | `q` | Quit |
@@ -76,18 +82,15 @@ pg rules delete <name>
 
 ## Auto-Approve Modes
 
-When you press `t` on a session in the TUI, it cycles through:
+Press `t` in the TUI to advance the active session through:
 
-- **OFF**: No auto-approval (default)
-- **SAFE**: Auto-approve all except destructive commands
-- **ALL**: Auto-approve everything (use with caution)
+- **OFF**: No prompts are auto-approved.
+- **SAFE**: Auto-approve everything except known destructive commands (`rm -rf`, `git push --force`, `DROP TABLE`, etc.).
+- **NODEL**: Auto-approve all prompts that do not delete files, directories, or tables.
+- **ALL**: Auto-approve every prompt with no filtering.
+- **BURST**: Mirrors whichever auto mode is currently selected, but only until the session idles; useful for short-lived flows.
 
-Destructive commands blocked in SAFE mode include:
-- `rm -rf`, `rm -r`, `rm -f`
-- `git push --force`, `git reset --hard`
-- `DROP TABLE`, `DELETE FROM`, `TRUNCATE`
-- `sudo rm`, `shutdown`, `reboot`
-- And more...
+SAFE and NODEL both rely on curated command-pattern lists, and you can strengthen either policy through the rules engine.
 
 ## Rules Configuration
 
@@ -110,8 +113,15 @@ rules:
     match:
       prompt_types: [bash]
       commands: ["^(npm|yarn|pnpm) install"]
+
 ```
 
+## Detection and Context
+
+- **Claude/Codex Detection**: Permission Guardian inspects tmux panes and process metadata to detect Claude Code and Codex agents. Some wrappers, custom shells, or heavily nested tmux trees can hide the agent from `ps`, so treat detection as best-effort and verify the session identity before enabling auto modes.
+- **Context Display**: Claude explicitly prints `Ctx: ##k`, and the UI now renders that exact value instead of trying to normalize against a hard-coded max. Codex sessions expose `% context left`, which is shown as a percentage bar. Knowing whether you are on Claude or Codex helps interpret the display correctly.
+
+In the TUI, `NODEL` is the compact on-screen label for the delete-blocking policy.
 ## Requirements
 
 - macOS or Linux

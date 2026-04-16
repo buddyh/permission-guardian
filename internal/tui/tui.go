@@ -283,7 +283,7 @@ func (m AutoMode) String() string {
 	case AutoSafe:
 		return "SAFE"
 	case AutoNoDelete:
-		return "NO-DELETE"
+		return "NODEL"
 	case AutoAll:
 		return "ALL"
 	default:
@@ -1499,11 +1499,11 @@ func (m Model) renderLogView(width, height int) string {
 
 	lines = append(lines, "")
 	lines = append(lines, dividerStyle.Render(strings.Repeat("─", width-4)))
-	lines = append(lines, fmt.Sprintf("  Auto policies: %d SAFE, %d NO-DELETE, %d ALL", safeCount, noDeleteCount, allCount))
+	lines = append(lines, fmt.Sprintf("  Auto policies: %d SAFE, %d NODEL, %d ALL", safeCount, noDeleteCount, allCount))
 	lines = append(lines, fmt.Sprintf("  Log file: %s", logFilePath()))
 	lines = append(lines, "")
 	lines = append(lines, detailLabelStyle.Render("  SAFE: approve except destructive ops (rm -rf, git push --force, chmod -R, kill -9, etc.)"))
-	lines = append(lines, detailLabelStyle.Render("  NO-DELETE: approve except delete ops (rm, rmdir, DROP/TRUNCATE/DELETE, docker prune/remove, etc.)"))
+	lines = append(lines, detailLabelStyle.Render("  NODEL: approve except delete ops (rm, rmdir, DROP/TRUNCATE/DELETE, docker prune/remove, etc.)"))
 	lines = append(lines, detailLabelStyle.Render("  ALL: approve every prompt except trust-folder and plan-mode prompts, which are never auto-approved"))
 
 	return lipgloss.JoinVertical(lipgloss.Left, lines...)
@@ -1664,7 +1664,7 @@ func (m Model) renderHeader(width int) string {
 		logoSubStyle.Render("tmux approval router for Claude Code + Codex"),
 	}
 	if width >= 120 {
-		titleLines = append(titleLines, detailLabelStyle.Render("SAFE = non-destructive  •  NO-DELETE = no delete ops  •  ALL = everything"))
+		titleLines = append(titleLines, detailLabelStyle.Render("SAFE = non-destructive  •  NODEL = no delete ops  •  ALL = everything"))
 	}
 	titleBlock := lipgloss.JoinVertical(lipgloss.Left, titleLines...)
 	leftBlock := lipgloss.JoinHorizontal(lipgloss.Center, logoBlock, "  ", titleBlock)
@@ -1710,7 +1710,7 @@ func (m Model) renderHeader(width int) string {
 
 	statsLines := []string{
 		stats,
-		detailLabelStyle.Render(fmt.Sprintf("  Auto policies: %d SAFE · %d NO-DELETE · %d ALL", safeCount, noDeleteCount, allCount)),
+		detailLabelStyle.Render(fmt.Sprintf("  Auto policies: %d SAFE · %d NODEL · %d ALL", safeCount, noDeleteCount, allCount)),
 	}
 	if actionLine != "" {
 		statsLines = append(statsLines, actionLine)
@@ -1720,7 +1720,7 @@ func (m Model) renderHeader(width int) string {
 	// Combine logo and stats
 	header := lipgloss.JoinHorizontal(lipgloss.Center, leftBlock, "    ", statsBlock)
 
-	return header
+	return lipgloss.NewStyle().PaddingTop(1).Render(header)
 }
 
 // renderMiniHeader renders a compact single-line header for mini mode
@@ -2491,8 +2491,8 @@ func (m Model) renderHelpBar(width int, mode helpMode, isMini bool) string {
 		)
 		line2 := []string{
 			item("[t]", "off/safe"),
-			item("[T]", "cycle safe/no-delete/all"),
-			item("[x]", "no-delete"),
+			item("[T]", "cycle safe/nodel/all"),
+			item("[x]", "nodel"),
 			item("[b]", "burst until idle"),
 			item("[R]", "rename"),
 			item("[K]", "kill"),
@@ -2503,7 +2503,7 @@ func (m Model) renderHelpBar(width int, mode helpMode, isMini bool) string {
 		}
 		line3 := []string{
 			detailLabelStyle.Render("SAFE = approve except destructive ops"),
-			detailLabelStyle.Render("NO-DELETE = approve except delete ops"),
+			detailLabelStyle.Render("NODEL = approve except delete ops"),
 			detailLabelStyle.Render("ALL = approve every prompt"),
 		}
 		lines = [][]string{line1, line2, line3}
@@ -2520,7 +2520,7 @@ func (m Model) renderHelpBar(width int, mode helpMode, isMini bool) string {
 		line2 := []string{
 			item("[t]", "off/safe"),
 			item("[T]", "cycle modes"),
-			item("[x]", "no-delete"),
+			item("[x]", "nodel"),
 			item("[b]", "burst"),
 			item("[R]", "rename"),
 			item("[K]", "kill"),

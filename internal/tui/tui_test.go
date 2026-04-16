@@ -12,7 +12,7 @@ func TestAutoModeDescription(t *testing.T) {
 		wantDetails string
 	}{
 		{mode: AutoSafe, wantString: "SAFE", wantDetails: "approve except destructive ops"},
-		{mode: AutoNoDelete, wantString: "NO-DELETE", wantDetails: "approve except delete ops"},
+		{mode: AutoNoDelete, wantString: "NODEL", wantDetails: "approve except delete ops"},
 		{mode: AutoAll, wantString: "ALL", wantDetails: "approve every prompt"},
 	}
 

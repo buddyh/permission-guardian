@@ -20,6 +20,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - CLI commands: `list`, `approve`, `deny`, `auto`, `rules`
 - Session metadata display (model, context size, git branch, working directory)
 - Task timer for tracking work sessions
+### Changed
+- Clarified Go 1.24 build/install requirements and documented the explicit auto-approve policies (`SAFE`, `NODEL`, `ALL`, `BURST`) plus their CLI shortcuts.
+- Documented best-effort Claude/Codex detection caveats and the difference between Claude's absolute `Ctx` value and Codex's `% context left`.
 
 ### Security
 - SAFE mode provides protection against destructive commands

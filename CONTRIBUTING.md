@@ -27,6 +27,28 @@ Prerequisite: Go 1.24+ and tmux installed locally.
    go test ./...
    ```
 
+5. To exercise the UI while developing:
+   ```bash
+   ./pg watch
+   ```
+   Resize the terminal to evaluate how the refreshed header and policy indicators behave under Compact vs Expanded layouts.
+
+# Auto-Approve Modes
+
+Permission Guardian supports the same policies users see in the UI:
+
+- **OFF**: Manual approvals only.
+- **SAFE**: Auto-approve all prompts except a curated list of destructive commands.
+- **NODEL**: Auto-approve everything that does not delete files, directories, or tables.
+- **ALL**: Approve every prompt automatically.
+- **BURST**: Temporarily follows the active policy until the session goes idle; useful for short-lived workflows.
+
+Each mode is backed by explicit pattern matching and can be extended via the rules engine. In the TUI, `NODEL` is the compact label used for the delete-blocking policy.
+
+## Detection Notes
+
+Detection relies on tmux pane titles, `ps`, and heuristic keywords, so some wrappers or nested shells might prevent Permission Guardian from identifying a Claude or Codex agent. Treat detection as best-effort and double-check the session label before enabling auto-approve policies. Claude reports an absolute `Ctx: ##k` value, while Codex exposes `% context left`; the UI now renders those raw signals, so tests and instrumentation that inspect the context indicators should assert against the same raw values.
+
 ## Code Style
 
 - Run `go fmt ./...` before committing
