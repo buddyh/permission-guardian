@@ -136,44 +136,37 @@ var (
 )
 
 // ASCII Logo
-const logo = `
- ██████╗  ██████╗
- ██╔══██╗██╔════╝
- ██████╔╝██║  ███╗
- ██╔═══╝ ██║   ██║
- ██║     ╚██████╔╝
- ╚═╝      ╚═════╝ `
-
-const logoText = `Permission
-Guardian
-───────────
-AI Agent
-Monitor`
+const logo = `██████╗  ██████╗
+██╔══██╗██╔════╝
+██████╔╝██║  ███╗
+██╔═══╝ ██║   ██║
+██║     ╚██████╔╝
+╚═╝      ╚═════╝`
 
 // ═══════════════════════════════════════════════════════════════════════════
 // Key bindings
 // ═══════════════════════════════════════════════════════════════════════════
 type keyMap struct {
-	Up               key.Binding
-	Down             key.Binding
-	Approve          key.Binding
-	ApproveAlways    key.Binding
-	Deny             key.Binding
-	Refresh          key.Binding
-	ToggleAuto       key.Binding
-	ToggleAutoMode   key.Binding
-	ToggleNoDelete   key.Binding
-	ToggleBurst      key.Binding
-	ToggleView       key.Binding
-	ViewLog          key.Binding
-	Preview          key.Binding
-	SendText         key.Binding
-	RenameSession    key.Binding
-	KillSession      key.Binding
-	ToggleGit        key.Binding
-	ToggleCtx        key.Binding
-	ToggleModel      key.Binding
-	Quit             key.Binding
+	Up             key.Binding
+	Down           key.Binding
+	Approve        key.Binding
+	ApproveAlways  key.Binding
+	Deny           key.Binding
+	Refresh        key.Binding
+	ToggleAuto     key.Binding
+	ToggleAutoMode key.Binding
+	ToggleNoDelete key.Binding
+	ToggleBurst    key.Binding
+	ToggleView     key.Binding
+	ViewLog        key.Binding
+	Preview        key.Binding
+	SendText       key.Binding
+	RenameSession  key.Binding
+	KillSession    key.Binding
+	ToggleGit      key.Binding
+	ToggleCtx      key.Binding
+	ToggleModel    key.Binding
+	Quit           key.Binding
 }
 
 var keys = keyMap{
@@ -203,19 +196,19 @@ var keys = keyMap{
 	),
 	ToggleAuto: key.NewBinding(
 		key.WithKeys("t"),
-		key.WithHelp("t", "auto on/off"),
+		key.WithHelp("t", "off/safe"),
 	),
 	ToggleAutoMode: key.NewBinding(
 		key.WithKeys("T", "m"),
-		key.WithHelp("T", "safe/all"),
+		key.WithHelp("T", "cycle modes"),
 	),
 	ToggleNoDelete: key.NewBinding(
 		key.WithKeys("x"),
-		key.WithHelp("x", "nodelete"),
+		key.WithHelp("x", "no-delete"),
 	),
 	ToggleBurst: key.NewBinding(
 		key.WithKeys("b"),
-		key.WithHelp("b", "burst mode"),
+		key.WithHelp("b", "burst"),
 	),
 	ToggleView: key.NewBinding(
 		key.WithKeys("v"),
@@ -290,11 +283,24 @@ func (m AutoMode) String() string {
 	case AutoSafe:
 		return "SAFE"
 	case AutoNoDelete:
-		return "NODEL"
+		return "NO-DELETE"
 	case AutoAll:
 		return "ALL"
 	default:
 		return ""
+	}
+}
+
+func (m AutoMode) Description() string {
+	switch m {
+	case AutoSafe:
+		return "approve except destructive ops"
+	case AutoNoDelete:
+		return "approve except delete ops"
+	case AutoAll:
+		return "approve every prompt"
+	default:
+		return "auto approve off"
 	}
 }
 
@@ -311,6 +317,31 @@ func (m AutoMode) Next() AutoMode {
 	default:
 		return AutoOff
 	}
+}
+
+func countAutoModes(modes map[string]AutoMode) (safeCount, noDeleteCount, allCount int) {
+	for _, mode := range modes {
+		switch mode {
+		case AutoSafe:
+			safeCount++
+		case AutoNoDelete:
+			noDeleteCount++
+		case AutoAll:
+			allCount++
+		}
+	}
+	return safeCount, noDeleteCount, allCount
+}
+
+func autoModeStatus(mode AutoMode, sessionName string) string {
+	if mode == AutoOff {
+		return fmt.Sprintf("AUTO OFF: %s", sessionName)
+	}
+	return fmt.Sprintf("AUTO %s: %s (%s)", mode.String(), sessionName, mode.Description())
+}
+
+func burstModeStatus(mode AutoMode, sessionName string) string {
+	return fmt.Sprintf("BURST %s: %s (%s; until idle)", mode.String(), sessionName, mode.Description())
 }
 
 // Destructive command patterns - commands that should NOT be auto-approved in SAFE mode
@@ -830,18 +861,18 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				if currentMode == AutoOff {
 					// Turn on with SAFE mode (safe default)
 					m.autoApprove[name] = AutoSafe
-					m.actionStatus = fmt.Sprintf("AUTO SAFE: %s (skip destructive)", name)
+					m.actionStatus = autoModeStatus(AutoSafe, name)
 				} else {
 					// Turn off
 					m.autoApprove[name] = AutoOff
 					delete(m.burstMode, name)
-					m.actionStatus = fmt.Sprintf("AUTO OFF: %s", name)
+					m.actionStatus = autoModeStatus(AutoOff, name)
 				}
 				m.actionTime = time.Now()
 			}
 
 		case key.Matches(msg, keys.ToggleAutoMode):
-			// Cycle between SAFE → NODEL → ALL (only when auto is already on)
+			// Cycle between SAFE → NO-DELETE → ALL (only when auto is already on)
 			if m.cursor < len(m.sessions) {
 				name := m.sessions[m.cursor].Session.Name
 				currentMode := m.autoApprove[name]
@@ -849,22 +880,22 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				switch currentMode {
 				case AutoSafe:
 					m.autoApprove[name] = AutoNoDelete
-					m.actionStatus = fmt.Sprintf("AUTO NODEL: %s (skip deletes)", name)
+					m.actionStatus = autoModeStatus(AutoNoDelete, name)
 				case AutoNoDelete:
 					m.autoApprove[name] = AutoAll
-					m.actionStatus = fmt.Sprintf("AUTO ALL: %s (approve everything!)", name)
+					m.actionStatus = autoModeStatus(AutoAll, name)
 				case AutoAll:
 					m.autoApprove[name] = AutoSafe
-					m.actionStatus = fmt.Sprintf("AUTO SAFE: %s (skip destructive)", name)
+					m.actionStatus = autoModeStatus(AutoSafe, name)
 				default:
 					// Auto is off - inform user
-					m.actionStatus = fmt.Sprintf("Auto is OFF - press [t] first: %s", name)
+					m.actionStatus = fmt.Sprintf("AUTO OFF: %s (press [t] to start in SAFE)", name)
 				}
 				m.actionTime = time.Now()
 			}
 
 		case key.Matches(msg, keys.ToggleNoDelete):
-			// Toggle NODELETE mode ON/OFF for selected session
+			// Toggle NO-DELETE mode ON/OFF for selected session
 			if m.cursor < len(m.sessions) {
 				name := m.sessions[m.cursor].Session.Name
 				currentMode := m.autoApprove[name]
@@ -873,11 +904,11 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 					// Turn off
 					m.autoApprove[name] = AutoOff
 					delete(m.burstMode, name)
-					m.actionStatus = fmt.Sprintf("AUTO OFF: %s", name)
+					m.actionStatus = autoModeStatus(AutoOff, name)
 				} else {
-					// Turn on NODELETE (or switch from SAFE/ALL)
+					// Turn on NO-DELETE (or switch from SAFE/ALL)
 					m.autoApprove[name] = AutoNoDelete
-					m.actionStatus = fmt.Sprintf("AUTO NODEL: %s (skip deletes)", name)
+					m.actionStatus = autoModeStatus(AutoNoDelete, name)
 				}
 				m.actionTime = time.Now()
 			}
@@ -892,15 +923,15 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 					// Can't enable burst without an auto mode - enable SAFE+burst
 					m.autoApprove[name] = AutoSafe
 					m.burstMode[name] = true
-					m.actionStatus = fmt.Sprintf("BURST SAFE: %s (until idle)", name)
+					m.actionStatus = burstModeStatus(AutoSafe, name)
 				} else if m.burstMode[name] {
 					// Turn off burst
 					delete(m.burstMode, name)
-					m.actionStatus = fmt.Sprintf("BURST OFF: %s (still %s)", name, mode.String())
+					m.actionStatus = fmt.Sprintf("BURST OFF: %s (still AUTO %s)", name, mode.String())
 				} else {
 					// Turn on burst
 					m.burstMode[name] = true
-					m.actionStatus = fmt.Sprintf("BURST %s: %s (until idle)", mode.String(), name)
+					m.actionStatus = burstModeStatus(mode, name)
 				}
 				m.actionTime = time.Now()
 			}
@@ -1135,14 +1166,14 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			case AutoSafe:
 				// Approve unless it's a destructive command
 				if isDestructiveCommand(session.Request) {
-					skipReason = "destructive"
+					skipReason = "destructive command blocked"
 				} else {
 					shouldApprove = true
 				}
 			case AutoNoDelete:
 				// Approve unless it deletes files/folders/db records
 				if isDeleteCommand(session.Request) {
-					skipReason = "delete"
+					skipReason = "delete command blocked"
 				} else {
 					shouldApprove = true
 				}
@@ -1173,9 +1204,9 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				m.taskApprovals[session.Session.Name]++
 				// Show burst indicator in status if in burst mode
 				if m.burstMode[session.Session.Name] {
-					m.actionStatus = fmt.Sprintf("BURST: %s", session.Session.Name)
+					m.actionStatus = fmt.Sprintf("BURST %s approved: %s", mode.String(), session.Session.Name)
 				} else {
-					m.actionStatus = fmt.Sprintf("AUTO: %s", session.Session.Name)
+					m.actionStatus = fmt.Sprintf("AUTO %s approved: %s", mode.String(), session.Session.Name)
 				}
 				m.actionTime = time.Now()
 			} else if skipReason != "" {
@@ -1192,7 +1223,7 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 						GitBranch:  session.Info.GitBranch,
 					})
 				}
-				m.actionStatus = fmt.Sprintf("SKIP (%s): %s", skipReason, session.Session.Name)
+				m.actionStatus = fmt.Sprintf("AUTO %s held: %s (%s)", mode.String(), session.Session.Name, skipReason)
 				m.actionTime = time.Now()
 			}
 		}
@@ -1464,27 +1495,16 @@ func (m Model) renderLogView(width, height int) string {
 	}
 
 	// Count auto-approve sessions by mode
-	safeCount := 0
-	nodelCount := 0
-	allCount := 0
-	for _, mode := range m.autoApprove {
-		switch mode {
-		case AutoSafe:
-			safeCount++
-		case AutoNoDelete:
-			nodelCount++
-		case AutoAll:
-			allCount++
-		}
-	}
+	safeCount, noDeleteCount, allCount := countAutoModes(m.autoApprove)
 
 	lines = append(lines, "")
 	lines = append(lines, dividerStyle.Render(strings.Repeat("─", width-4)))
-	lines = append(lines, fmt.Sprintf("  Auto-approve: %d SAFE, %d NODEL, %d ALL", safeCount, nodelCount, allCount))
+	lines = append(lines, fmt.Sprintf("  Auto policies: %d SAFE, %d NO-DELETE, %d ALL", safeCount, noDeleteCount, allCount))
 	lines = append(lines, fmt.Sprintf("  Log file: %s", logFilePath()))
 	lines = append(lines, "")
-	lines = append(lines, detailLabelStyle.Render("  SAFE skips all destructive commands (rm -rf, git push --force, etc.)"))
-	lines = append(lines, detailLabelStyle.Render("  NODEL skips delete commands only (rm, DROP TABLE, DELETE FROM, etc.)"))
+	lines = append(lines, detailLabelStyle.Render("  SAFE: approve except destructive ops (rm -rf, git push --force, chmod -R, kill -9, etc.)"))
+	lines = append(lines, detailLabelStyle.Render("  NO-DELETE: approve except delete ops (rm, rmdir, DROP/TRUNCATE/DELETE, docker prune/remove, etc.)"))
+	lines = append(lines, detailLabelStyle.Render("  ALL: approve every prompt except trust-folder and plan-mode prompts, which are never auto-approved"))
 
 	return lipgloss.JoinVertical(lipgloss.Left, lines...)
 }
@@ -1638,32 +1658,22 @@ func (m Model) renderSplitPreview(width, height int) string {
 }
 
 func (m Model) renderHeader(width int) string {
-	// Logo section
-	logoLines := strings.Split(logo, "\n")
-	textLines := strings.Split(logoText, "\n")
-
-	var headerLines []string
-	maxLogoLines := max(len(logoLines), len(textLines))
-
-	for i := 0; i < maxLogoLines; i++ {
-		logoLine := ""
-		textLine := ""
-		if i < len(logoLines) {
-			logoLine = logoLines[i]
-		}
-		if i < len(textLines) {
-			textLine = textLines[i]
-		}
-		line := logoStyle.Render(fmt.Sprintf("%-20s", logoLine)) + "  " + logoSubStyle.Render(textLine)
-		headerLines = append(headerLines, line)
+	logoBlock := logoStyle.Render(logo)
+	titleLines := []string{
+		statusAccent.Render("Permission Guardian"),
+		logoSubStyle.Render("tmux approval router for Claude Code + Codex"),
 	}
-
-	logoBlock := lipgloss.JoinVertical(lipgloss.Left, headerLines...)
+	if width >= 120 {
+		titleLines = append(titleLines, detailLabelStyle.Render("SAFE = non-destructive  •  NO-DELETE = no delete ops  •  ALL = everything"))
+	}
+	titleBlock := lipgloss.JoinVertical(lipgloss.Left, titleLines...)
+	leftBlock := lipgloss.JoinHorizontal(lipgloss.Center, logoBlock, "  ", titleBlock)
 
 	// Stats section
 	waiting := m.getWaitingSessions()
 	totalSessions := len(m.sessions)
 	waitingCount := len(waiting)
+	safeCount, noDeleteCount, allCount := countAutoModes(m.autoApprove)
 
 	var statusText string
 	if waitingCount > 0 {
@@ -1685,30 +1695,30 @@ func (m Model) renderHeader(width int) string {
 		switch {
 		case strings.HasPrefix(m.actionStatus, "approved+remembered"):
 			actionLine = statusAccent.Render("  " + m.actionStatus + " (won't ask again)")
-		case strings.HasPrefix(m.actionStatus, "approved"), strings.HasPrefix(m.actionStatus, "AUTO:"):
+		case strings.HasPrefix(m.actionStatus, "approved"):
 			actionLine = statusApproved.Render("  " + m.actionStatus)
 		case strings.HasPrefix(m.actionStatus, "denied"):
 			actionLine = statusDenied.Render("  " + m.actionStatus)
-		case strings.HasPrefix(m.actionStatus, "AUTO SAFE"), strings.HasPrefix(m.actionStatus, "AUTO NODEL"), strings.HasPrefix(m.actionStatus, "AUTO ALL"):
-			actionLine = statusAuto.Render("  " + m.actionStatus)
 		case strings.HasPrefix(m.actionStatus, "AUTO OFF"):
 			actionLine = statusIdle.Render("  " + m.actionStatus)
-		case strings.HasPrefix(m.actionStatus, "SKIP"):
-			actionLine = statusWaiting.Render("  " + m.actionStatus)
+		case strings.HasPrefix(m.actionStatus, "AUTO "), strings.HasPrefix(m.actionStatus, "BURST "):
+			actionLine = statusAuto.Render("  " + m.actionStatus)
 		default:
 			actionLine = detailValueStyle.Render("  " + m.actionStatus)
 		}
 	}
 
-	statsBlock := lipgloss.JoinVertical(lipgloss.Left,
-		"",
-		"",
+	statsLines := []string{
 		stats,
-		actionLine,
-	)
+		detailLabelStyle.Render(fmt.Sprintf("  Auto policies: %d SAFE · %d NO-DELETE · %d ALL", safeCount, noDeleteCount, allCount)),
+	}
+	if actionLine != "" {
+		statsLines = append(statsLines, actionLine)
+	}
+	statsBlock := lipgloss.JoinVertical(lipgloss.Left, statsLines...)
 
 	// Combine logo and stats
-	header := lipgloss.JoinHorizontal(lipgloss.Top, logoBlock, "    ", statsBlock)
+	header := lipgloss.JoinHorizontal(lipgloss.Center, leftBlock, "    ", statsBlock)
 
 	return header
 }
@@ -2480,10 +2490,10 @@ func (m Model) renderHelpBar(width int, mode helpMode, isMini bool) string {
 			item("[l]", "log"),
 		)
 		line2 := []string{
-			item("[t]", "auto"),
-			item("[T]", "mode"),
-			item("[x]", "nodelete"),
-			item("[b]", "burst"),
+			item("[t]", "off/safe"),
+			item("[T]", "cycle safe/no-delete/all"),
+			item("[x]", "no-delete"),
+			item("[b]", "burst until idle"),
 			item("[R]", "rename"),
 			item("[K]", "kill"),
 			item("[g]", "git"),
@@ -2491,7 +2501,12 @@ func (m Model) renderHelpBar(width int, mode helpMode, isMini bool) string {
 			item("[M]", "agent"),
 			item("[q]", "quit"),
 		}
-		lines = [][]string{line1, line2}
+		line3 := []string{
+			detailLabelStyle.Render("SAFE = approve except destructive ops"),
+			detailLabelStyle.Render("NO-DELETE = approve except delete ops"),
+			detailLabelStyle.Render("ALL = approve every prompt"),
+		}
+		lines = [][]string{line1, line2, line3}
 	case helpModeMedium:
 		line1 := []string{
 			item("[a]", "approve"),
@@ -2503,9 +2518,9 @@ func (m Model) renderHelpBar(width int, mode helpMode, isMini bool) string {
 			item("[l]", "log"),
 		}
 		line2 := []string{
-			item("[t]", "auto"),
-			item("[T]", "mode"),
-			item("[x]", "nodelete"),
+			item("[t]", "off/safe"),
+			item("[T]", "cycle modes"),
+			item("[x]", "no-delete"),
 			item("[b]", "burst"),
 			item("[R]", "rename"),
 			item("[K]", "kill"),
@@ -2614,7 +2629,11 @@ func (m *Model) processControlFiles() {
 		if mode == AutoOff {
 			delete(m.autoApprove, sessionName)
 		}
-		m.actionStatus = fmt.Sprintf("AUTO %s: %s (via control file)", mode, sessionName)
+		if mode == AutoOff {
+			m.actionStatus = autoModeStatus(AutoOff, sessionName) + " (via control file)"
+		} else {
+			m.actionStatus = autoModeStatus(mode, sessionName) + " (via control file)"
+		}
 		m.actionTime = time.Now()
 	}
 }
