@@ -1658,7 +1658,9 @@ func (m Model) renderSplitPreview(width, height int) string {
 }
 
 func (m Model) renderHeader(width int) string {
-	logoBlock := logoStyle.Render(logo)
+	logoBlock := lipgloss.NewStyle().
+		Padding(1, 0, 0, 2).
+		Render(logoStyle.Render(logo))
 	titleLines := []string{
 		statusAccent.Render("Permission Guardian"),
 		logoSubStyle.Render("tmux approval router for Claude Code + Codex"),
@@ -1666,8 +1668,10 @@ func (m Model) renderHeader(width int) string {
 	if width >= 120 {
 		titleLines = append(titleLines, detailLabelStyle.Render("SAFE = non-destructive  •  NODEL = no delete ops  •  ALL = everything"))
 	}
-	titleBlock := lipgloss.JoinVertical(lipgloss.Left, titleLines...)
-	leftBlock := lipgloss.JoinHorizontal(lipgloss.Center, logoBlock, "  ", titleBlock)
+	titleBlock := lipgloss.NewStyle().
+		PaddingTop(3).
+		Render(lipgloss.JoinVertical(lipgloss.Left, titleLines...))
+	leftBlock := lipgloss.JoinHorizontal(lipgloss.Top, logoBlock, "  ", titleBlock)
 
 	// Stats section
 	waiting := m.getWaitingSessions()
@@ -1717,7 +1721,6 @@ func (m Model) renderHeader(width int) string {
 	}
 	statsBlock := lipgloss.JoinVertical(lipgloss.Left, statsLines...)
 
-	// Combine logo and stats
 	header := lipgloss.JoinHorizontal(lipgloss.Center, leftBlock, "    ", statsBlock)
 
 	return lipgloss.NewStyle().PaddingTop(1).Render(header)
