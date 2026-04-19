@@ -25,7 +25,6 @@ import (
 var (
 	// Base colors
 	colorBg       = lipgloss.Color("#1e2139")
-	colorSurface  = lipgloss.Color("#282c47")
 	colorSelected = lipgloss.Color("#3d4466") // More visible selection highlight
 	colorBorder   = lipgloss.Color("#5a6178") // Brighter separators
 	colorTextPri  = lipgloss.Color("#e8eaee")
@@ -45,10 +44,6 @@ var (
 // Styles
 // ═══════════════════════════════════════════════════════════════════════════
 var (
-	// Base styles
-	baseStyle = lipgloss.NewStyle().
-			Background(colorBg)
-
 	// Logo styles
 	logoStyle = lipgloss.NewStyle().
 			Foreground(colorAccent).
@@ -56,12 +51,6 @@ var (
 
 	logoSubStyle = lipgloss.NewStyle().
 			Foreground(colorTextSec)
-
-	// Header styles
-	headerStyle = lipgloss.NewStyle().
-			Background(colorSurface).
-			Foreground(colorTextPri).
-			Padding(0, 2)
 
 	// Panel styles
 	panelStyle = lipgloss.NewStyle().
@@ -77,11 +66,6 @@ var (
 	// Session list styles
 	sessionNameStyle = lipgloss.NewStyle().
 				Foreground(colorInfo).
-				Bold(true)
-
-	sessionSelectedStyle = lipgloss.NewStyle().
-				Background(colorSelected).
-				Foreground(colorTextPri).
 				Bold(true)
 
 	// Status styles
@@ -115,12 +99,6 @@ var (
 
 	detailValueStyle = lipgloss.NewStyle().
 				Foreground(colorTextPri)
-
-	// Preview styles
-	previewStyle = lipgloss.NewStyle().
-			Foreground(colorTextPri).
-			Background(colorSurface).
-			Padding(0, 1)
 
 	// Help bar styles
 	helpStyle = lipgloss.NewStyle().
@@ -2317,111 +2295,6 @@ func (m Model) renderDetailPanel(width, height int) string {
 	)
 
 	return panel
-}
-
-func (m Model) renderSessionDetails(session detector.WaitingSession, width, height int) string {
-	var lines []string
-
-	// Session info
-	lines = append(lines, m.detailLine("Session", session.Session.Name, width))
-	lines = append(lines, m.detailLine("Agent", string(session.Agent), width))
-
-	// Status
-	var status string
-	if session.PromptType != detector.PromptUnknown {
-		status = statusWaiting.Render("WAITING FOR APPROVAL")
-	} else if session.Info.IsWorking {
-		workStatus := session.Info.WorkingStatus
-		if workStatus == "" {
-			workStatus = "working"
-		}
-		status = statusWorking.Render(workStatus)
-	} else {
-		status = statusIdle.Render("idle")
-	}
-	lines = append(lines, m.detailLine("Status", status, width))
-
-	lines = append(lines, "")
-
-	// Model info
-	if session.Info.Model != "" {
-		lines = append(lines, m.detailLine("Model", session.Info.Model, width))
-	}
-	if session.Info.ContextSize != "" {
-		lines = append(lines, m.detailLine("Context", session.Info.ContextSize, width))
-	}
-
-	lines = append(lines, "")
-
-	// Git info
-	if session.Info.GitBranch != "" {
-		gitInfo := session.Info.GitBranch
-		if session.Info.GitChanges != "" {
-			gitInfo += " " + session.Info.GitChanges
-		}
-		lines = append(lines, m.detailLine("Git", gitInfo, width))
-	}
-
-	// CWD
-	if session.CWD != "" && session.CWD != "unknown" {
-		cwd := session.CWD
-		if strings.HasPrefix(cwd, "/Users/") {
-			parts := strings.SplitN(cwd, "/", 4)
-			if len(parts) >= 4 {
-				cwd = "~/" + parts[3]
-			}
-		}
-		if len(cwd) > width-12 {
-			cwd = "..." + cwd[len(cwd)-(width-15):]
-		}
-		lines = append(lines, m.detailLine("Dir", cwd, width))
-	}
-
-	// Time info
-	if session.Info.SessionTime != "" {
-		lines = append(lines, m.detailLine("Session", session.Info.SessionTime, width))
-	}
-	if session.Info.BlockTime != "" {
-		lines = append(lines, m.detailLine("Block", session.Info.BlockTime, width))
-	}
-
-	// Request preview (if waiting)
-	if session.PromptType != detector.PromptUnknown {
-		lines = append(lines, "")
-		lines = append(lines, dividerStyle.Render(strings.Repeat("─", width)))
-		lines = append(lines, "")
-
-		promptType := strings.ToUpper(string(session.PromptType))
-		lines = append(lines, statusWaiting.Render(fmt.Sprintf("  %s REQUEST", promptType)))
-		lines = append(lines, "")
-
-		// Raw content preview (use styled if available)
-		contentToShow := session.StyledContent
-		if contentToShow == "" {
-			contentToShow = session.RawContent
-		}
-		previewLines := strings.Split(contentToShow, "\n")
-		maxPreview := height - len(lines) - 2
-		if maxPreview > 10 {
-			maxPreview = 10
-		}
-		if len(previewLines) > maxPreview {
-			previewLines = previewLines[len(previewLines)-maxPreview:]
-		}
-
-		for _, line := range previewLines {
-			// Render directly to preserve ANSI colors
-			lines = append(lines, "  "+line)
-		}
-	}
-
-	return lipgloss.JoinVertical(lipgloss.Left, lines...)
-}
-
-func (m Model) detailLine(label, value string, width int) string {
-	labelStr := detailLabelStyle.Render(fmt.Sprintf("  %-10s", label))
-	valueStr := detailValueStyle.Render(value)
-	return labelStr + valueStr
 }
 
 type helpMode int
