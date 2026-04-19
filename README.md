@@ -14,19 +14,41 @@ A TUI dashboard for monitoring and managing permission prompts across multiple C
 
 ## Installation
 
-Go 1.24+ is required to build from source or install the binary. Install via:
+Go 1.24+ is only required if you are building from source. For end users, use one of these install paths:
+
+### Homebrew tap
+
+```bash
+brew install buddyh/tap/permission-guardian
+```
+
+### One-line installer
+
+macOS and Linux:
+
+```bash
+curl -fsSL https://raw.githubusercontent.com/buddyh/permission-guardian/main/install.sh | bash
+```
+
+Optional environment variables:
+
+```bash
+VERSION=0.1.0 INSTALL_DIR="$HOME/.local/bin" curl -fsSL https://raw.githubusercontent.com/buddyh/permission-guardian/main/install.sh | bash
+```
+
+### Go install
 
 ```bash
 go install github.com/buddyh/permission-guardian/cmd/pg@latest
 ```
 
-Or build and install locally:
+### Build from source
 
 ```bash
 git clone https://github.com/buddyh/permission-guardian.git
 cd permission-guardian
 go build -o pg ./cmd/pg
-sudo mv pg /usr/local/bin/
+sudo install pg /usr/local/bin/pg
 ```
 
 ## Usage
@@ -126,7 +148,7 @@ In the TUI, `NODEL` is the compact on-screen label for the delete-blocking polic
 
 - macOS or Linux
 - tmux
-- Go 1.24+ (for building)
+- Go 1.24+ (only for building from source)
 
 ## License
 

@@ -55,6 +55,16 @@ Detection relies on tmux pane titles, `ps`, and heuristic keywords, so some wrap
 - Run `go vet ./...` to check for issues
 - Follow standard Go conventions
 
+## Releases
+
+Tagged releases are built with GoReleaser and published to GitHub Releases. The same workflow also updates the Homebrew tap at `buddyh/homebrew-tap`.
+
+Release automation requires one repo secret in `buddyh/permission-guardian`:
+
+- `TAP_GITHUB_TOKEN`: a GitHub personal access token with `repo` scope and write access to `buddyh/homebrew-tap`
+
+Without that secret, tag builds can still create release artifacts, but the Homebrew formula update will fail when the workflow tries to write to the tap repository.
+
 ## Testing
 
 - Add tests for new functionality

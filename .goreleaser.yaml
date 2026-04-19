@@ -1,0 +1,59 @@
+version: 2
+
+project_name: permission-guardian
+
+builds:
+  - id: pg
+    main: ./cmd/pg
+    binary: pg
+    goos:
+      - darwin
+      - linux
+    goarch:
+      - amd64
+      - arm64
+    ldflags:
+      - -s -w -X main.version={{ .Version }}
+
+archives:
+  - id: pg
+    ids:
+      - pg
+    formats:
+      - tar.gz
+    name_template: >-
+      {{ .ProjectName }}_{{ .Version }}_{{ .Os }}_{{ .Arch }}
+    files:
+      - LICENSE
+      - README.md
+
+checksum:
+  name_template: checksums.txt
+
+release:
+  github:
+    owner: buddyh
+    name: permission-guardian
+  draft: false
+  prerelease: auto
+  make_latest: true
+
+brews:
+  - name: permission-guardian
+    ids:
+      - pg
+    repository:
+      owner: buddyh
+      name: homebrew-tap
+      branch: main
+      token: "{{ .Env.TAP_GITHUB_TOKEN }}"
+    directory: .
+    homepage: https://github.com/buddyh/permission-guardian
+    description: TUI dashboard for managing Claude Code and Codex permission prompts in tmux
+    license: MIT
+    commit_author:
+      name: buddyh-bot
+      email: buddyh@users.noreply.github.com
+    commit_msg_template: "Brew formula update for {{ .ProjectName }} {{ .Tag }}"
+    test: |
+      system "#{bin}/pg", "--version"
