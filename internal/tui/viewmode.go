@@ -120,9 +120,7 @@ func GetVisibleColumns(width int) []ColumnDef {
 
 	// If we have enough space at full widths, show everything
 	if width >= fixedWidth+20 {
-		for _, col := range DefaultColumns {
-			visible = append(visible, col)
-		}
+		visible = append(visible, DefaultColumns...)
 		remaining := width - fixedWidth - 4
 		if remaining < 20 {
 			remaining = 20

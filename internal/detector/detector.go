@@ -424,10 +424,6 @@ func extractBashRequest(lines []string) string {
 					}
 					return cmd
 				}
-				// Also check for Reason line
-				if strings.HasPrefix(trimmed, "Reason:") {
-					continue // Skip reason, keep looking for command
-				}
 			}
 		}
 	}

@@ -1180,14 +1180,14 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			}
 
 			if shouldApprove {
-				writeLog(session.Session.Name, string(session.PromptType), session.Request)
+				_ = writeLog(session.Session.Name, string(session.PromptType), session.Request)
 				// Log to SQLite audit database
 				if m.auditDB != nil {
 					modeStr := mode.String()
 					if m.burstMode[session.Session.Name] {
 						modeStr += "+BURST"
 					}
-					m.auditDB.LogDecision(db.Decision{
+					_ = m.auditDB.LogDecision(db.Decision{
 						Timestamp:  time.Now(),
 						Session:    session.Session.Name,
 						Decision:   "auto_approved",
@@ -1212,7 +1212,7 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			} else if skipReason != "" {
 				// Log skipped decisions too
 				if m.auditDB != nil {
-					m.auditDB.LogDecision(db.Decision{
+					_ = m.auditDB.LogDecision(db.Decision{
 						Timestamp:  time.Now(),
 						Session:    session.Session.Name,
 						Decision:   "auto_skipped",
@@ -1419,7 +1419,6 @@ func (m Model) View() string {
 	}
 	if availableHeight < minContentHeight && helpBar != "" {
 		helpBar = ""
-		helpHeight = 0
 		availableHeight = height - headerHeight
 	}
 	if availableHeight < 1 {
@@ -1511,7 +1510,6 @@ func (m Model) renderLogView(width, height int) string {
 
 func (m Model) renderPreviewView(width, height int) string {
 	if m.cursor >= len(m.sessions) {
-		m.showPreview = false
 		return ""
 	}
 
@@ -2210,7 +2208,7 @@ func renderContextBar(ctxSize string, width int) string {
 	ctxSize = strings.TrimSpace(ctxSize)
 	if strings.HasSuffix(ctxSize, "%") {
 		var remainingPct float64
-		fmt.Sscanf(strings.TrimSuffix(ctxSize, "%"), "%f", &remainingPct)
+		_, _ = fmt.Sscanf(strings.TrimSuffix(ctxSize, "%"), "%f", &remainingPct)
 		pct := remainingPct / 100.0
 		if pct < 0 {
 			pct = 0
@@ -2436,29 +2434,26 @@ const (
 )
 
 func helpModeForSize(width, height int, isMini bool) helpMode {
-	mode := helpModeMinimal
-	switch {
-	case width >= 100:
-		mode = helpModeFull
-	case width >= 90:
-		mode = helpModeMedium
-	case width >= 70:
-		mode = helpModeCompact
-	default:
-		mode = helpModeMinimal
-	}
-
-	if isMini && mode > helpModeCompact {
-		mode = helpModeCompact
-	}
-	if height < 10 {
+	if isMini || height < 10 {
 		return helpModeMinimal
 	}
-	if height < 12 && mode > helpModeCompact {
-		mode = helpModeCompact
-	}
 
-	return mode
+	switch {
+	case width >= 100:
+		if height < 12 {
+			return helpModeCompact
+		}
+		return helpModeFull
+	case width >= 90:
+		if height < 12 {
+			return helpModeCompact
+		}
+		return helpModeMedium
+	case width >= 70:
+		return helpModeCompact
+	default:
+		return helpModeMinimal
+	}
 }
 
 func (m Model) renderHelpBar(width int, mode helpMode, isMini bool) string {
@@ -2605,7 +2600,7 @@ func (m *Model) processControlFiles() {
 		filePath := filepath.Join(controlDir, sessionName)
 
 		data, err := os.ReadFile(filePath)
-		os.Remove(filePath) // always clean up
+		_ = os.Remove(filePath) // always clean up
 		if err != nil {
 			continue
 		}
