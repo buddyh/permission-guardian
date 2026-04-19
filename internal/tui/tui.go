@@ -514,7 +514,7 @@ func writeLog(session string, promptType string, request string) error {
 	if err != nil {
 		return err
 	}
-	defer f.Close()
+	defer func() { _ = f.Close() }()
 
 	// Truncate request for log
 	req := strings.ReplaceAll(request, "\n", " ")
@@ -550,7 +550,7 @@ func writeTaskLog(session string, duration time.Duration, approvals int) error {
 	if err != nil {
 		return err
 	}
-	defer f.Close()
+	defer func() { _ = f.Close() }()
 
 	entry := fmt.Sprintf("%s | %s | duration=%s | approvals=%d\n",
 		time.Now().Format("2006-01-02 15:04:05"),
@@ -794,7 +794,7 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				session := m.sessions[m.cursor]
 				if session.PromptType != detector.PromptUnknown {
 					if m.auditDB != nil {
-						m.auditDB.LogDecision(db.Decision{
+						_ = m.auditDB.LogDecision(db.Decision{
 							Timestamp:  time.Now(),
 							Session:    session.Session.Name,
 							Decision:   "approved",
@@ -814,7 +814,7 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				session := m.sessions[m.cursor]
 				if session.PromptType != detector.PromptUnknown {
 					if m.auditDB != nil {
-						m.auditDB.LogDecision(db.Decision{
+						_ = m.auditDB.LogDecision(db.Decision{
 							Timestamp:  time.Now(),
 							Session:    session.Session.Name,
 							Decision:   "approved_always",
@@ -834,7 +834,7 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				session := m.sessions[m.cursor]
 				if session.PromptType != detector.PromptUnknown {
 					if m.auditDB != nil {
-						m.auditDB.LogDecision(db.Decision{
+						_ = m.auditDB.LogDecision(db.Decision{
 							Timestamp:  time.Now(),
 							Session:    session.Session.Name,
 							Decision:   "denied",
@@ -1078,10 +1078,10 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 						// Task run complete - log it
 						duration := lastActive.Sub(startTime)
 						approvals := m.taskApprovals[name]
-						writeTaskLog(name, duration, approvals)
+						_ = writeTaskLog(name, duration, approvals)
 						// Log to SQLite
 						if m.auditDB != nil {
-							m.auditDB.LogTaskRun(db.TaskRun{
+							_ = m.auditDB.LogTaskRun(db.TaskRun{
 								StartTime: startTime,
 								EndTime:   lastActive,
 								Session:   name,

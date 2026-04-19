@@ -20,7 +20,7 @@ const (
 	PromptFetch   PromptType = "fetch"
 	PromptEdit    PromptType = "edit"
 	PromptWrite   PromptType = "write"
-	PromptRead    PromptType = "read"  // Read, Search, Glob operations
+	PromptRead    PromptType = "read" // Read, Search, Glob operations
 	PromptMCP     PromptType = "mcp"
 	PromptTask    PromptType = "task"
 	PromptTrust   PromptType = "trust" // Folder trust prompt (not a tool permission)
@@ -102,9 +102,9 @@ var (
 	// Working status indicators - Claude Code uses various bullet characters:
 	// ✽ (U+273D), ⏺ (U+23FA), ✻ (U+273B), ✱ (U+2731), * (plain asterisk)
 	// Followed by "Something..." with either "(ctrl+c to interrupt)" or "(1m 28s • ↑ 2.5k tok"
-	workingBullets  = `[✽⏺✻✱]`
-	workingPattern  = regexp.MustCompile(workingBullets + `[\s\x{00A0}]*(.+?)(?:\s*\(|$)`)
-	ctrlCPattern    = regexp.MustCompile(`\(ctrl\+c to interrupt`)
+	workingBullets = `[✽⏺✻✱]`
+	workingPattern = regexp.MustCompile(workingBullets + `[\s\x{00A0}]*(.+?)(?:\s*\(|$)`)
+	ctrlCPattern   = regexp.MustCompile(`\(ctrl\+c to interrupt`)
 	// New format: "(1m 28s • ↑ 2.5k tok" or "(3s • ↑ 100 tok"
 	tokenCountPattern = regexp.MustCompile(`\(\d+[ms]\s*\d*[ms]?\s*[•·]\s*[↑↓]`)
 	// Compacting status: "· Compacting conversation…"
@@ -207,7 +207,7 @@ func DetectAgent(panePID int) AgentType {
 
 func mustAtoi(s string) int {
 	var n int
-	fmt.Sscanf(s, "%d", &n)
+	_, _ = fmt.Sscanf(s, "%d", &n)
 	return n
 }
 

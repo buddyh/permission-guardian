@@ -192,20 +192,24 @@ func TestGetDecisionsBySession(t *testing.T) {
 
 	// Insert decisions for different sessions
 	for i := 0; i < 3; i++ {
-		db.LogDecision(Decision{
+		if err := db.LogDecision(Decision{
 			Timestamp: time.Now(),
 			Session:   "session-A",
 			Decision:  "approved",
 			Request:   "command A",
-		})
+		}); err != nil {
+			t.Fatalf("LogDecision() error = %v", err)
+		}
 	}
 	for i := 0; i < 2; i++ {
-		db.LogDecision(Decision{
+		if err := db.LogDecision(Decision{
 			Timestamp: time.Now(),
 			Session:   "session-B",
 			Decision:  "approved",
 			Request:   "command B",
-		})
+		}); err != nil {
+			t.Fatalf("LogDecision() error = %v", err)
+		}
 	}
 
 	// Get decisions for session-A
@@ -243,13 +247,15 @@ func TestGetStats(t *testing.T) {
 	}
 
 	// Insert a task run
-	db.LogTaskRun(TaskRun{
+	if err := db.LogTaskRun(TaskRun{
 		StartTime: time.Now().Add(-30 * time.Minute),
 		EndTime:   time.Now(),
 		Session:   "s1",
 		Duration:  30 * time.Minute,
 		Approvals: 5,
-	})
+	}); err != nil {
+		t.Fatalf("LogTaskRun() error = %v", err)
+	}
 
 	stats, err := db.GetStats()
 	if err != nil {
