@@ -696,7 +696,7 @@ func newLogCmd(flags *rootFlags) *cobra.Command {
 			if err != nil {
 				return fmt.Errorf("failed to open audit database: %w", err)
 			}
-			defer auditDB.Close()
+			defer func() { _ = auditDB.Close() }()
 
 			var decisions []db.Decision
 			if session != "" {
@@ -752,7 +752,7 @@ func newLogCmd(flags *rootFlags) *cobra.Command {
 			if err != nil {
 				return fmt.Errorf("failed to open audit database: %w", err)
 			}
-			defer auditDB.Close()
+			defer func() { _ = auditDB.Close() }()
 
 			decisions, err := auditDB.SearchDecisions(query, limit)
 			if err != nil {
@@ -798,7 +798,7 @@ func newLogCmd(flags *rootFlags) *cobra.Command {
 			if err != nil {
 				return fmt.Errorf("failed to open audit database: %w", err)
 			}
-			defer auditDB.Close()
+			defer func() { _ = auditDB.Close() }()
 
 			stats, err := auditDB.GetStats()
 			if err != nil {

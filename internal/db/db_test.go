@@ -25,13 +25,13 @@ func testDB(t *testing.T) *DB {
 
 	db := &DB{conn: conn}
 	if err := db.migrate(); err != nil {
-		conn.Close()
+		_ = conn.Close()
 		t.Fatalf("Failed to migrate test database: %v", err)
 	}
 
 	t.Cleanup(func() {
-		db.Close()
-		os.Remove(path)
+		_ = db.Close()
+		_ = os.Remove(path)
 	})
 
 	return db

@@ -61,7 +61,7 @@ func Open() (*DB, error) {
 
 	db := &DB{conn: conn}
 	if err := db.migrate(); err != nil {
-		conn.Close()
+		_ = conn.Close()
 		return nil, fmt.Errorf("failed to migrate database: %w", err)
 	}
 
@@ -129,7 +129,7 @@ func (db *DB) LogTaskRun(t TaskRun) error {
 }
 
 // GetRecentDecisions returns the most recent decisions
-func (db *DB) GetRecentDecisions(limit int) ([]Decision, error) {
+func (db *DB) GetRecentDecisions(limit int) (_ []Decision, err error) {
 	rows, err := db.conn.Query(`
 		SELECT id, timestamp, session, decision, mode, prompt_type, request, project_dir, git_branch, task_run_id
 		FROM decisions
@@ -139,7 +139,11 @@ func (db *DB) GetRecentDecisions(limit int) ([]Decision, error) {
 	if err != nil {
 		return nil, err
 	}
-	defer rows.Close()
+	defer func() {
+		if closeErr := rows.Close(); closeErr != nil && err == nil {
+			err = closeErr
+		}
+	}()
 
 	var decisions []Decision
 	for rows.Next() {
@@ -162,7 +166,7 @@ func (db *DB) GetRecentDecisions(limit int) ([]Decision, error) {
 }
 
 // SearchDecisions searches decisions by session name or request content
-func (db *DB) SearchDecisions(query string, limit int) ([]Decision, error) {
+func (db *DB) SearchDecisions(query string, limit int) (_ []Decision, err error) {
 	rows, err := db.conn.Query(`
 		SELECT id, timestamp, session, decision, mode, prompt_type, request, project_dir, git_branch, task_run_id
 		FROM decisions
@@ -173,7 +177,11 @@ func (db *DB) SearchDecisions(query string, limit int) ([]Decision, error) {
 	if err != nil {
 		return nil, err
 	}
-	defer rows.Close()
+	defer func() {
+		if closeErr := rows.Close(); closeErr != nil && err == nil {
+			err = closeErr
+		}
+	}()
 
 	var decisions []Decision
 	for rows.Next() {
@@ -196,7 +204,7 @@ func (db *DB) SearchDecisions(query string, limit int) ([]Decision, error) {
 }
 
 // GetDecisionsBySession returns decisions for a specific session
-func (db *DB) GetDecisionsBySession(session string, limit int) ([]Decision, error) {
+func (db *DB) GetDecisionsBySession(session string, limit int) (_ []Decision, err error) {
 	rows, err := db.conn.Query(`
 		SELECT id, timestamp, session, decision, mode, prompt_type, request, project_dir, git_branch, task_run_id
 		FROM decisions
@@ -207,7 +215,11 @@ func (db *DB) GetDecisionsBySession(session string, limit int) ([]Decision, erro
 	if err != nil {
 		return nil, err
 	}
-	defer rows.Close()
+	defer func() {
+		if closeErr := rows.Close(); closeErr != nil && err == nil {
+			err = closeErr
+		}
+	}()
 
 	var decisions []Decision
 	for rows.Next() {
@@ -230,7 +242,7 @@ func (db *DB) GetDecisionsBySession(session string, limit int) ([]Decision, erro
 }
 
 // GetStats returns aggregate statistics
-func (db *DB) GetStats() (map[string]interface{}, error) {
+func (db *DB) GetStats() (_ map[string]interface{}, err error) {
 	stats := make(map[string]interface{})
 
 	// Total decisions
@@ -249,7 +261,11 @@ func (db *DB) GetStats() (map[string]interface{}, error) {
 	if err != nil {
 		return nil, err
 	}
-	defer rows.Close()
+	defer func() {
+		if closeErr := rows.Close(); closeErr != nil && err == nil {
+			err = closeErr
+		}
+	}()
 
 	byType := make(map[string]int)
 	for rows.Next() {
@@ -271,7 +287,11 @@ func (db *DB) GetStats() (map[string]interface{}, error) {
 	if err != nil {
 		return nil, err
 	}
-	defer rows2.Close()
+	defer func() {
+		if closeErr := rows2.Close(); closeErr != nil && err == nil {
+			err = closeErr
+		}
+	}()
 
 	byMode := make(map[string]int)
 	for rows2.Next() {

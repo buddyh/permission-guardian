@@ -22,6 +22,13 @@ Go 1.24+ is only required if you are building from source. For end users, use on
 brew install buddyh/tap/permission-guardian
 ```
 
+Or, if you prefer the explicit two-step tap flow:
+
+```bash
+brew tap buddyh/tap
+brew install permission-guardian
+```
+
 ### One-line installer
 
 macOS and Linux:
@@ -33,14 +40,33 @@ curl -fsSL https://raw.githubusercontent.com/buddyh/permission-guardian/main/ins
 Optional environment variables:
 
 ```bash
-VERSION=0.1.0 INSTALL_DIR="$HOME/.local/bin" curl -fsSL https://raw.githubusercontent.com/buddyh/permission-guardian/main/install.sh | bash
+curl -fsSL https://raw.githubusercontent.com/buddyh/permission-guardian/main/install.sh | VERSION=0.1.1 INSTALL_DIR="$HOME/.local/bin" bash
 ```
+
+Use this when Homebrew is not available or you want a pinned version without building from source.
+
+### Direct release tarballs
+
+Download a prebuilt archive from the latest release and install `pg` manually:
+
+```bash
+https://github.com/buddyh/permission-guardian/releases/latest
+```
+
+Release artifacts are published for:
+
+- `darwin/arm64`
+- `darwin/amd64`
+- `linux/arm64`
+- `linux/amd64`
 
 ### Go install
 
 ```bash
 go install github.com/buddyh/permission-guardian/cmd/pg@latest
 ```
+
+Use this if you already have a Go toolchain and prefer Go-managed installs.
 
 ### Build from source
 

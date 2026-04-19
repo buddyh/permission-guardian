@@ -65,6 +65,13 @@ Release automation requires one repo secret in `buddyh/permission-guardian`:
 
 Without that secret, tag builds can still create release artifacts, but the Homebrew formula update will fail when the workflow tries to write to the tap repository.
 
+Recommended install paths for end users are:
+
+- Homebrew: `brew install buddyh/tap/permission-guardian`
+- One-line installer: `curl -fsSL https://raw.githubusercontent.com/buddyh/permission-guardian/main/install.sh | bash`
+- `go install` for Go users
+- Direct downloads from GitHub Releases
+
 ## Testing
 
 - Add tests for new functionality
