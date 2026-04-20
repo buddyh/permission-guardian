@@ -99,6 +99,8 @@ var (
 	sessionPattern    = regexp.MustCompile(`Session:[\s\x{00A0}]*([^\s\x{00A0}]+)`)
 	blockPattern      = regexp.MustCompile(`Block:[\s\x{00A0}]*([^\s\x{00A0}]+(?:[\s\x{00A0}]+\d+\w)?)`)
 	userInputPattern  = regexp.MustCompile(`❯[\s\x{00A0}]*(.+)`)
+	insertionsPattern = regexp.MustCompile(`(\d+)\s+insertions?\(\+\)`)
+	deletionsPattern  = regexp.MustCompile(`(\d+)\s+deletions?\(-\)`)
 	// Working status indicators - Claude Code uses various bullet characters:
 	// ✽ (U+273D), ⏺ (U+23FA), ✻ (U+273B), ✱ (U+2731), * (plain asterisk)
 	// Followed by "Something..." with either "(ctrl+c to interrupt)" or "(1m 28s • ↑ 2.5k tok"
@@ -649,6 +651,81 @@ func ExtractSessionInfo(content string) SessionInfo {
 	return info
 }
 
+func gitOutput(cwd string, args ...string) (string, error) {
+	cmd := exec.Command("git", append([]string{"-C", cwd}, args...)...)
+	out, err := cmd.Output()
+	if err != nil {
+		return "", err
+	}
+	return strings.TrimSpace(string(out)), nil
+}
+
+func parseGitShortStat(shortStat string) string {
+	if shortStat == "" {
+		return ""
+	}
+
+	parts := make([]string, 0, 2)
+	if match := insertionsPattern.FindStringSubmatch(shortStat); len(match) > 1 && match[1] != "" {
+		parts = append(parts, "+"+match[1])
+	}
+	if match := deletionsPattern.FindStringSubmatch(shortStat); len(match) > 1 && match[1] != "" {
+		parts = append(parts, "-"+match[1])
+	}
+
+	return strings.Join(parts, ",")
+}
+
+func queryGitInfo(cwd string) (branch string, changes string, err error) {
+	if cwd == "" || cwd == "unknown" {
+		return "", "", nil
+	}
+
+	if _, err = gitOutput(cwd, "rev-parse", "--is-inside-work-tree"); err != nil {
+		return "", "", nil
+	}
+
+	branch, _ = gitOutput(cwd, "branch", "--show-current")
+	if branch == "" {
+		branch, _ = gitOutput(cwd, "rev-parse", "--short", "HEAD")
+	}
+
+	shortStat, _ := gitOutput(cwd, "diff", "--shortstat", "HEAD")
+	changes = parseGitShortStat(shortStat)
+
+	return branch, changes, nil
+}
+
+func enrichSessionInfoWithGit(info *SessionInfo, cwd string, cache map[string]SessionInfo) {
+	if cwd == "" || cwd == "unknown" {
+		return
+	}
+
+	if cached, ok := cache[cwd]; ok {
+		if cached.GitBranch != "" {
+			info.GitBranch = cached.GitBranch
+		}
+		if cached.GitChanges != "" {
+			info.GitChanges = cached.GitChanges
+		}
+		return
+	}
+
+	branch, changes, _ := queryGitInfo(cwd)
+	gitInfo := SessionInfo{
+		GitBranch:  branch,
+		GitChanges: changes,
+	}
+	cache[cwd] = gitInfo
+
+	if gitInfo.GitBranch != "" {
+		info.GitBranch = gitInfo.GitBranch
+	}
+	if gitInfo.GitChanges != "" {
+		info.GitChanges = gitInfo.GitChanges
+	}
+}
+
 // GetWaitingSessions returns all sessions waiting for permission approval
 func GetWaitingSessions(minIdleSeconds int, captureLines int) ([]WaitingSession, error) {
 	sessions, err := tmux.ListSessions()
@@ -657,6 +734,7 @@ func GetWaitingSessions(minIdleSeconds int, captureLines int) ([]WaitingSession,
 	}
 
 	var waiting []WaitingSession
+	gitInfoCache := make(map[string]SessionInfo)
 
 	for _, session := range sessions {
 		// Check idle time
@@ -695,6 +773,7 @@ func GetWaitingSessions(minIdleSeconds int, captureLines int) ([]WaitingSession,
 			cwd = ExtractCWD(content)
 		}
 		info := ExtractSessionInfo(content)
+		enrichSessionInfoWithGit(&info, cwd, gitInfoCache)
 
 		// Get last 20 lines for raw content
 		lines := strings.Split(content, "\n")
@@ -727,6 +806,7 @@ func GetAllAgentSessions(captureLines int) ([]WaitingSession, error) {
 	}
 
 	var agentSessions []WaitingSession
+	gitInfoCache := make(map[string]SessionInfo)
 
 	// Single process snapshot for all agent detection (replaces ~100 subprocess calls)
 	pt := snapshotProcessTable()
@@ -764,6 +844,7 @@ func GetAllAgentSessions(captureLines int) ([]WaitingSession, error) {
 			cwd = ExtractCWD(content)
 		}
 		info := ExtractSessionInfo(content)
+		enrichSessionInfoWithGit(&info, cwd, gitInfoCache)
 
 		// Get last 20 lines for raw content
 		lines := strings.Split(content, "\n")

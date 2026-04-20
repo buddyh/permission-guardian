@@ -1,6 +1,9 @@
 package detector
 
 import (
+	"os"
+	"os/exec"
+	"path/filepath"
 	"strings"
 	"testing"
 )
@@ -468,5 +471,70 @@ func TestMustAtoi(t *testing.T) {
 				t.Errorf("mustAtoi(%q) = %d, expected %d", tt.input, result, tt.expected)
 			}
 		})
+	}
+}
+
+func TestParseGitShortStat(t *testing.T) {
+	tests := []struct {
+		name  string
+		input string
+		want  string
+	}{
+		{name: "insertions and deletions", input: " 1 file changed, 12 insertions(+), 3 deletions(-)", want: "+12,-3"},
+		{name: "insertions only", input: " 1 file changed, 5 insertions(+)", want: "+5"},
+		{name: "deletions only", input: " 1 file changed, 2 deletions(-)", want: "-2"},
+		{name: "empty", input: "", want: ""},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			if got := parseGitShortStat(tt.input); got != tt.want {
+				t.Fatalf("parseGitShortStat(%q) = %q, want %q", tt.input, got, tt.want)
+			}
+		})
+	}
+}
+
+func TestQueryGitInfo(t *testing.T) {
+	if _, err := exec.LookPath("git"); err != nil {
+		t.Skip("git not installed")
+	}
+
+	repoDir := t.TempDir()
+
+	run := func(args ...string) {
+		t.Helper()
+		cmd := exec.Command("git", args...)
+		cmd.Dir = repoDir
+		out, err := cmd.CombinedOutput()
+		if err != nil {
+			t.Fatalf("git %v failed: %v\n%s", args, err, out)
+		}
+	}
+
+	run("init")
+	run("config", "user.name", "Test User")
+	run("config", "user.email", "test@example.com")
+
+	filePath := filepath.Join(repoDir, "README.md")
+	if err := os.WriteFile(filePath, []byte("hello\n"), 0o644); err != nil {
+		t.Fatalf("write file: %v", err)
+	}
+	run("add", "README.md")
+	run("commit", "-m", "init")
+
+	if err := os.WriteFile(filePath, []byte("hello\nworld\n"), 0o644); err != nil {
+		t.Fatalf("update file: %v", err)
+	}
+
+	branch, changes, err := queryGitInfo(repoDir)
+	if err != nil {
+		t.Fatalf("queryGitInfo() error = %v", err)
+	}
+	if branch == "" {
+		t.Fatal("queryGitInfo() returned empty branch")
+	}
+	if changes != "+1" {
+		t.Fatalf("queryGitInfo() changes = %q, want %q", changes, "+1")
 	}
 }
