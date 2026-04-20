@@ -26,7 +26,9 @@ import (
 var (
 	// Base colors
 	colorBg       = lipgloss.Color("#1e2139")
-	colorSelected = lipgloss.Color("#3d4466") // More visible selection highlight
+	colorPanel    = lipgloss.Color("#232744") // Elevated panel surface
+	colorPanelAlt = lipgloss.Color("#1a1e34") // Deeper inset / zebra background
+	colorSelected = lipgloss.Color("#314a76") // Cooler, stronger selection highlight
 	colorBorder   = lipgloss.Color("#5a6178") // Brighter separators
 	colorTextPri  = lipgloss.Color("#e8eaee")
 	colorTextSec  = lipgloss.Color("#b8bcc8") // Brighter secondary text
@@ -60,12 +62,13 @@ var (
 
 	// Panel styles
 	panelStyle = lipgloss.NewStyle().
+			Background(colorPanel).
 			Border(lipgloss.RoundedBorder()).
-			BorderForeground(colorBorder).
+			BorderForegroundBlend(colorHeroAlt, colorBorder, colorAccent).
 			Padding(0, 1)
 
 	panelTitleStyle = lipgloss.NewStyle().
-			Foreground(colorTextSec).
+			Foreground(colorHero).
 			Bold(true).
 			Padding(0, 1)
 
@@ -121,6 +124,14 @@ var (
 	headerRuleStyle = lipgloss.NewStyle().
 			Foreground(colorHero).
 			Faint(true)
+
+	tableHeaderStyle = lipgloss.NewStyle().
+				Foreground(colorHeroAlt).
+				Bold(true)
+
+	selectedIndicatorStyle = lipgloss.NewStyle().
+				Foreground(colorHero).
+				Bold(true)
 )
 
 // ASCII Logo
@@ -1655,9 +1666,11 @@ func (m Model) renderSplitPreview(width, height int) string {
 
 func renderCompositedText(content string, front, shadow, glow lipgloss.Style, shadowOffsetX, shadowOffsetY int) string {
 	comp := lipgloss.NewCompositor(
-		lipgloss.NewLayer(glow.Render(content)).X(2).Y(1).Z(0),
-		lipgloss.NewLayer(shadow.Render(content)).X(shadowOffsetX).Y(shadowOffsetY).Z(1),
-		lipgloss.NewLayer(front.Render(content)).Z(2),
+		lipgloss.NewLayer(glow.Render(content)).X(3).Y(1).Z(0),
+		lipgloss.NewLayer(glow.Render(content)).X(2).Y(0).Z(1),
+		lipgloss.NewLayer(shadow.Render(content)).X(shadowOffsetX+1).Y(shadowOffsetY).Z(2),
+		lipgloss.NewLayer(shadow.Render(content)).X(shadowOffsetX).Y(shadowOffsetY).Z(3),
+		lipgloss.NewLayer(front.Render(content)).Z(4),
 	)
 	return comp.Render()
 }
@@ -1748,6 +1761,7 @@ func (m Model) renderHeader(width int) string {
 	header := lipgloss.JoinHorizontal(lipgloss.Center, leftBlock, "    ", statsBlock)
 
 	return lipgloss.NewStyle().
+		Background(colorPanelAlt).
 		BorderBottom(true).
 		BorderStyle(lipgloss.NormalBorder()).
 		BorderForegroundBlend(colorHeroAlt, colorHero, colorAccent).
@@ -1848,7 +1862,18 @@ func (m Model) renderSessionTable(width, height int) string {
 	} else if m.viewMode == ViewExpanded {
 		viewIndicator = " [Expanded]"
 	}
-	title := panelTitleStyle.Render("SESSIONS" + viewIndicator)
+	titleRule := ""
+	if width >= 80 {
+		ruleWidth := width / 6
+		if ruleWidth > 18 {
+			ruleWidth = 18
+		}
+		if ruleWidth < 8 {
+			ruleWidth = 8
+		}
+		titleRule = " " + headerRuleStyle.Render(strings.Repeat("═", ruleWidth))
+	}
+	title := panelTitleStyle.Render("SESSIONS"+viewIndicator) + titleRule
 
 	// Get column definitions based on mode
 	var allColumns []ColumnDef
@@ -1877,8 +1902,8 @@ func (m Model) renderSessionTable(width, height int) string {
 	}
 
 	// Build header
-	sepStyle := lipgloss.NewStyle().Foreground(colorBorder)
-	headerTextStyle := lipgloss.NewStyle().Foreground(colorTextDim).Bold(true)
+	sepStyle := lipgloss.NewStyle().Foreground(colorHeroAlt).Faint(true)
+	headerTextStyle := tableHeaderStyle
 
 	var headerCells []string
 	var divParts []string
@@ -1892,7 +1917,7 @@ func (m Model) renderSessionTable(width, height int) string {
 		divSep = "─┼─"
 	}
 	_ = sepWidth // suppress unused warning
-	divider := dividerStyle.Render(" " + strings.Join(divParts, divSep))
+	divider := headerRuleStyle.Render(" " + strings.Join(divParts, divSep))
 
 	var lines []string
 	lines = append(lines, headerLine)
@@ -1949,9 +1974,9 @@ func (m Model) renderTableRow(session detector.WaitingSession, selected bool, wa
 	if selected {
 		rowBg = colorSelected
 	} else if rowIndex%2 == 1 {
-		rowBg = lipgloss.Color("#252840")
+		rowBg = colorPanelAlt
 	} else {
-		rowBg = colorBg
+		rowBg = colorPanel
 	}
 
 	// Helper to apply background to a style
@@ -1988,7 +2013,7 @@ func (m Model) renderTableRow(session detector.WaitingSession, selected bool, wa
 
 	// Add selection indicator or space prefix
 	if selected {
-		indicator := withBg(lipgloss.NewStyle()).Foreground(colorAccent).Bold(true).Render("▶")
+		indicator := withBg(selectedIndicatorStyle).Render("▶")
 		row = indicator + row
 	} else {
 		row = withBg(lipgloss.NewStyle()).Render(" ") + row
@@ -2036,7 +2061,9 @@ func (m Model) renderEmptyRow(columns []ColumnDef, isMini bool, rowIndex int) st
 
 	rowBg := colorBg
 	if rowIndex%2 == 1 {
-		rowBg = lipgloss.Color("#252840")
+		rowBg = colorPanelAlt
+	} else {
+		rowBg = colorPanel
 	}
 	withBg := func(s lipgloss.Style) lipgloss.Style {
 		return s.Background(rowBg)
