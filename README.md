@@ -43,7 +43,7 @@ brew install permission-guardian
 
 ### One-line installer
 
-macOS and Linux:
+macOS:
 
 ```bash
 curl -fsSL https://raw.githubusercontent.com/buddyh/permission-guardian/main/install.sh | bash
@@ -69,8 +69,6 @@ Release artifacts are published for:
 
 - `darwin/arm64`
 - `darwin/amd64`
-- `linux/arm64`
-- `linux/amd64`
 
 ### Go install
 
@@ -196,7 +194,7 @@ rules:
 In the TUI, `NODEL` is the compact on-screen label for the delete-blocking policy.
 ## Requirements
 
-- macOS or Linux
+- macOS
 - tmux
 - Claude Code and/or Codex sessions running inside tmux
 - Go 1.24+ (only for building from source)
