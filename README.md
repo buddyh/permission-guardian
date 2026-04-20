@@ -28,6 +28,20 @@ Go 1.24+ is only required if you are building from source. For end users, use on
 
 Install methods below only install `pg`. You still need `tmux` installed and your Claude Code/Codex sessions running inside tmux for the app to do anything useful.
 
+### Install tmux first
+
+If you do not already have `tmux`:
+
+```bash
+brew install tmux
+```
+
+Verify it:
+
+```bash
+tmux -V
+```
+
 ### Homebrew tap
 
 ```bash
@@ -59,10 +73,12 @@ Use this when Homebrew is not available or you want a pinned version without bui
 
 ### Direct release tarballs
 
-Download a prebuilt archive from the latest release and install `pg` manually:
+Download the archive that matches your Mac and install `pg` manually:
 
 ```bash
-https://github.com/buddyh/permission-guardian/releases/latest
+curl -LO https://github.com/buddyh/permission-guardian/releases/latest/download/permission-guardian_0.1.1_darwin_<arm64|amd64>.tar.gz
+tar -xzf permission-guardian_0.1.1_darwin_<arm64|amd64>.tar.gz
+sudo install pg /usr/local/bin/pg
 ```
 
 Release artifacts are published for:
@@ -78,6 +94,16 @@ go install github.com/buddyh/permission-guardian/cmd/pg@latest
 
 Use this if you already have a Go toolchain and prefer Go-managed installs.
 
+### Verify the install
+
+After any install path:
+
+```bash
+pg --version
+```
+
+If you installed to `~/.local/bin`, make sure that directory is on your `PATH`.
+
 ### Build from source
 
 ```bash
@@ -91,15 +117,34 @@ sudo install pg /usr/local/bin/pg
 
 ### Quick Start
 
-1. Install `tmux` if you do not already have it.
-2. Start Claude Code or Codex inside a tmux session.
-3. In another shell, run:
+1. Install `tmux`.
+2. Install `pg`.
+3. Start a tmux session:
+
+```bash
+tmux new -s agents
+```
+
+4. Inside tmux, start Claude Code or Codex.
+5. In another shell, verify tmux is running:
+
+```bash
+tmux ls
+```
+
+6. Check whether Permission Guardian can see any waiting sessions:
+
+```bash
+pg list
+```
+
+7. Launch the dashboard:
 
 ```bash
 pg watch
 ```
 
-If `tmux` is not running, or your agent sessions are outside tmux, Permission Guardian will not find any sessions.
+If `pg list` shows nothing, that can still be normal until one of your agent sessions is actually waiting on a permission prompt.
 
 ### Interactive Dashboard
 
@@ -149,6 +194,34 @@ pg rules disable <name>
 pg rules add my-rule --session "work-*" --type bash --action approve
 pg rules delete <name>
 ```
+
+## Troubleshooting
+
+### `tmux is not running`
+
+Start tmux first:
+
+```bash
+tmux new -s agents
+```
+
+Then launch Claude Code or Codex inside that tmux session.
+
+### `pg watch` opens but shows no sessions
+
+Check these in order:
+
+1. `tmux ls` shows at least one running session.
+2. Claude Code or Codex is running inside a tmux pane, not in a normal shell tab.
+3. The session is actually waiting on a permission prompt if you are using `pg list`.
+
+### `pg: command not found`
+
+Your install directory is not on `PATH`. Check where the installer placed `pg`, then either add that directory to `PATH` or reinstall to a directory already on `PATH`.
+
+### Detection looks wrong
+
+Detection is best-effort and based on tmux pane content plus process inspection. Nested shells, wrappers, and custom launch flows can make detection less reliable. Keep the agent launch as direct as possible inside tmux.
 
 ## Auto-Approve Modes
 
