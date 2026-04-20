@@ -38,6 +38,8 @@ var (
 	colorActive  = lipgloss.Color("#a78bfa") // Working/active
 	colorInfo    = lipgloss.Color("#60a5fa") // Info/neutral
 	colorAccent  = lipgloss.Color("#f472b6") // Highlight/accent
+	colorCodex   = lipgloss.Color("#58a6ff") // Distinct blue for Codex labels
+	colorClaude  = lipgloss.Color("#ff7a1a") // True orange for Claude labels
 )
 
 // ═══════════════════════════════════════════════════════════════════════════
@@ -2100,14 +2102,14 @@ func (m Model) getColumnValues(session detector.WaitingSession, isWaiting bool, 
 		} else {
 			agentText = "Claude"
 		}
-		agentStyle = lipgloss.NewStyle().Foreground(colorInfo)
+		agentStyle = lipgloss.NewStyle().Foreground(colorClaude).Bold(true)
 	case detector.AgentCodex:
 		if isMini {
 			agentText = "CX"
 		} else {
 			agentText = "Codex"
 		}
-		agentStyle = lipgloss.NewStyle().Foreground(colorAccent)
+		agentStyle = lipgloss.NewStyle().Foreground(colorCodex).Bold(true)
 	default:
 		agentText = "-"
 		agentStyle = detailLabelStyle
