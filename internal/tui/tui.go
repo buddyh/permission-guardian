@@ -1664,38 +1664,49 @@ func (m Model) renderSplitPreview(width, height int) string {
 	return panelStyle.Width(width).Render(content)
 }
 
-func renderCompositedText(content string, front, shadow, glow lipgloss.Style, shadowOffsetX, shadowOffsetY int) string {
+func solidBlock(width, height int) string {
+	if width <= 0 || height <= 0 {
+		return ""
+	}
+	line := strings.Repeat(" ", width)
+	lines := make([]string, height)
+	for i := range lines {
+		lines[i] = line
+	}
+	return strings.Join(lines, "\n")
+}
+
+func renderCompositedBox(content string, boxStyle, shadowStyle lipgloss.Style, shadowOffsetX, shadowOffsetY int) string {
+	box := boxStyle.Render(content)
+	shadow := shadowStyle.Render(solidBlock(lipgloss.Width(box), lipgloss.Height(box)))
 	comp := lipgloss.NewCompositor(
-		lipgloss.NewLayer(glow.Render(content)).X(3).Y(1).Z(0),
-		lipgloss.NewLayer(glow.Render(content)).X(2).Y(0).Z(1),
-		lipgloss.NewLayer(shadow.Render(content)).X(shadowOffsetX+1).Y(shadowOffsetY).Z(2),
-		lipgloss.NewLayer(shadow.Render(content)).X(shadowOffsetX).Y(shadowOffsetY).Z(3),
-		lipgloss.NewLayer(front.Render(content)).Z(4),
+		lipgloss.NewLayer(shadow).X(shadowOffsetX).Y(shadowOffsetY).Z(0),
+		lipgloss.NewLayer(box).Z(1),
 	)
 	return comp.Render()
 }
 
 func (m Model) renderHeader(width int) string {
-	logoFrontStyle := lipgloss.NewStyle().Foreground(colorHero).Bold(true)
-	logoShadowStyle := lipgloss.NewStyle().Foreground(colorHeroAlt).Bold(true)
-	logoGlowStyle := lipgloss.NewStyle().Foreground(colorHeroFX).Faint(true)
-	titleFrontStyle := lipgloss.NewStyle().Foreground(colorHero).Bold(true)
-	titleShadowStyle := lipgloss.NewStyle().Foreground(colorHeroAlt).Bold(true)
-	titleGlowStyle := lipgloss.NewStyle().Foreground(colorHeroFX).Faint(true)
+	const (
+		headerGap     = 4
+		titleGap      = 2
+		minTitleWidth = 34
+	)
 
 	logoBlock := lipgloss.NewStyle().
 		Padding(1, 0, 0, 2).
-		Render(renderCompositedText(logo, logoFrontStyle, logoShadowStyle, logoGlowStyle, 1, 1))
+		Render(logoStyle.Render(logo))
 
-	titleMain := renderCompositedText("Permission Guardian", titleFrontStyle, titleShadowStyle, titleGlowStyle, 1, 1)
+	logoWidth := lipgloss.Width(logoBlock)
+	titleMainStyle := lipgloss.NewStyle().
+		Foreground(colorHero).
+		Bold(true)
+	titleMain := titleMainStyle.Render("Permission Guardian")
 	titleLines := []string{
 		titleMain,
 		logoSubStyle.Render("tmux approval router for Claude Code + Codex"),
 	}
-	if width >= 120 {
-		titleLines = append(titleLines, detailLabelStyle.Render("SAFE = non-destructive  •  NODEL = no delete ops  •  ALL = everything"))
-	}
-	if width >= 100 {
+	if width >= 96 {
 		ruleWidth := width / 5
 		if ruleWidth > 26 {
 			ruleWidth = 26
@@ -1705,11 +1716,6 @@ func (m Model) renderHeader(width int) string {
 		}
 		titleLines = append(titleLines, headerRuleStyle.Render(strings.Repeat("═", ruleWidth)))
 	}
-	titleBlock := lipgloss.NewStyle().
-		PaddingTop(3).
-		Render(lipgloss.JoinVertical(lipgloss.Left, titleLines...))
-	leftBlock := lipgloss.JoinHorizontal(lipgloss.Top, logoBlock, "  ", titleBlock)
-
 	// Stats section
 	waiting := m.getWaitingSessions()
 	totalSessions := len(m.sessions)
@@ -1718,56 +1724,111 @@ func (m Model) renderHeader(width int) string {
 
 	var statusText string
 	if waitingCount > 0 {
-		statusText = statusWaiting.Render(fmt.Sprintf("  %d WAITING", waitingCount))
+		statusText = statusWaiting.Render(fmt.Sprintf("%d WAITING", waitingCount))
 	} else {
-		statusText = statusApproved.Render("  ALL CLEAR")
+		statusText = statusApproved.Render("ALL CLEAR")
 	}
 
-	stats := fmt.Sprintf(
-		"%s sessions %s %s",
+	statsTop := lipgloss.JoinHorizontal(
+		lipgloss.Left,
 		detailValueStyle.Render(fmt.Sprintf("%d", totalSessions)),
+		" ",
+		detailLabelStyle.Render("sessions"),
+		"   ",
 		statusText,
+		" ",
 		m.spinner.View(),
 	)
 
 	// Action status
 	actionLine := ""
 	if m.actionStatus != "" {
+		actionStatus := m.actionStatus
+		if len(actionStatus) > 34 {
+			actionStatus = smartTruncate(actionStatus, 34)
+		}
 		switch {
 		case strings.HasPrefix(m.actionStatus, "approved+remembered"):
-			actionLine = statusAccent.Render("  " + m.actionStatus + " (won't ask again)")
+			actionLine = statusAccent.Render(actionStatus + " (won't ask again)")
 		case strings.HasPrefix(m.actionStatus, "approved"):
-			actionLine = statusApproved.Render("  " + m.actionStatus)
+			actionLine = statusApproved.Render(actionStatus)
 		case strings.HasPrefix(m.actionStatus, "denied"):
-			actionLine = statusDenied.Render("  " + m.actionStatus)
+			actionLine = statusDenied.Render(actionStatus)
 		case strings.HasPrefix(m.actionStatus, "AUTO OFF"):
-			actionLine = statusIdle.Render("  " + m.actionStatus)
+			actionLine = statusIdle.Render(actionStatus)
 		case strings.HasPrefix(m.actionStatus, "AUTO "), strings.HasPrefix(m.actionStatus, "BURST "):
-			actionLine = statusAuto.Render("  " + m.actionStatus)
+			actionLine = statusAuto.Render(actionStatus)
 		default:
-			actionLine = detailValueStyle.Render("  " + m.actionStatus)
+			actionLine = detailValueStyle.Render(actionStatus)
 		}
 	}
 
 	statsLines := []string{
-		stats,
-		detailLabelStyle.Render(fmt.Sprintf("  Auto policies: %d SAFE · %d NODEL · %d ALL", safeCount, noDeleteCount, allCount)),
+		panelTitleStyle.Render("STATUS"),
+		statsTop,
+		detailLabelStyle.Render(fmt.Sprintf("Auto policies: %d SAFE · %d NODEL · %d ALL", safeCount, noDeleteCount, allCount)),
 	}
 	if actionLine != "" {
 		statsLines = append(statsLines, actionLine)
 	}
-	statsBlock := lipgloss.JoinVertical(lipgloss.Left, statsLines...)
+	statsContent := lipgloss.JoinVertical(lipgloss.Left, statsLines...)
+	statsCardStyle := lipgloss.NewStyle().
+		Background(colorPanel).
+		Border(lipgloss.RoundedBorder()).
+		BorderForegroundBlend(colorHeroAlt, colorHero, colorAccent).
+		Padding(0, 1)
+	statsShadowStyle := lipgloss.NewStyle().
+		Background(colorBg).
+		Faint(true)
+	statsCard := renderCompositedBox(statsContent, statsCardStyle, statsShadowStyle, 2, 1)
+	statsWidth := lipgloss.Width(statsCard)
 
-	header := lipgloss.JoinHorizontal(lipgloss.Center, leftBlock, "    ", statsBlock)
+	titleWidth := width - logoWidth - titleGap
+	statsOnTopRow := false
+	if width >= logoWidth+titleGap+minTitleWidth+headerGap+statsWidth {
+		statsOnTopRow = true
+		titleWidth = width - statsWidth - headerGap - logoWidth - titleGap
+	}
+	if titleWidth < minTitleWidth {
+		titleWidth = minTitleWidth
+	}
+
+	titleBlock := lipgloss.NewStyle().
+		PaddingTop(3).
+		Width(titleWidth).
+		Render(lipgloss.JoinVertical(lipgloss.Left, titleLines...))
+	leftBlock := lipgloss.JoinHorizontal(lipgloss.Top, logoBlock, strings.Repeat(" ", titleGap), titleBlock)
+
+	var sections []string
+	if statsOnTopRow {
+		spacerWidth := width - lipgloss.Width(leftBlock) - statsWidth
+		if spacerWidth < headerGap {
+			spacerWidth = headerGap
+		}
+		topRow := lipgloss.JoinHorizontal(lipgloss.Top, leftBlock, strings.Repeat(" ", spacerWidth), statsCard)
+		sections = append(sections, topRow)
+	} else {
+		sections = append(sections, leftBlock)
+		sections = append(sections, lipgloss.PlaceHorizontal(width, lipgloss.Right, statsCard))
+	}
+
+	policyText := "SAFE = non-destructive  •  NODEL = no delete ops  •  ALL = everything"
+	policyInset := logoWidth + titleGap
+	if width >= 120 && width-policyInset >= lipgloss.Width(policyText) {
+		sections = append(sections, lipgloss.NewStyle().
+			PaddingLeft(policyInset).
+			Render(detailLabelStyle.Render(policyText)))
+	}
 
 	return lipgloss.NewStyle().
+		Width(width).
 		Background(colorPanelAlt).
 		BorderBottom(true).
 		BorderStyle(lipgloss.NormalBorder()).
 		BorderForegroundBlend(colorHeroAlt, colorHero, colorAccent).
 		PaddingTop(1).
 		PaddingBottom(1).
-		Render(header)
+		Render(lipgloss.JoinVertical(lipgloss.Left, sections...))
 }
 
 // renderMiniHeader renders a compact single-line header for mini mode
