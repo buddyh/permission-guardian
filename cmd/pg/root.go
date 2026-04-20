@@ -8,12 +8,12 @@ import (
 	"syscall"
 	"time"
 
+	tea "charm.land/bubbletea/v2"
 	"github.com/buddyh/permission-guardian/internal/db"
 	"github.com/buddyh/permission-guardian/internal/detector"
 	"github.com/buddyh/permission-guardian/internal/rules"
 	"github.com/buddyh/permission-guardian/internal/tmux"
 	"github.com/buddyh/permission-guardian/internal/tui"
-	tea "github.com/charmbracelet/bubbletea"
 	"github.com/spf13/cobra"
 )
 
@@ -70,7 +70,7 @@ func newWatchCmd(flags *rootFlags) *cobra.Command {
 			refreshRate := time.Duration(refreshSec) * time.Second
 			model := tui.New(refreshRate)
 
-			p := tea.NewProgram(model, tea.WithAltScreen())
+			p := tea.NewProgram(model)
 			_, err := p.Run()
 			return err
 		},

@@ -3,19 +3,20 @@ package tui
 
 import (
 	"fmt"
+	"image/color"
 	"os"
 	"path/filepath"
 	"strings"
 	"time"
 
+	"charm.land/bubbles/v2/key"
+	"charm.land/bubbles/v2/spinner"
+	"charm.land/bubbles/v2/textinput"
+	tea "charm.land/bubbletea/v2"
+	"charm.land/lipgloss/v2"
 	"github.com/buddyh/permission-guardian/internal/db"
 	"github.com/buddyh/permission-guardian/internal/detector"
 	"github.com/buddyh/permission-guardian/internal/tmux"
-	"github.com/charmbracelet/bubbles/key"
-	"github.com/charmbracelet/bubbles/spinner"
-	"github.com/charmbracelet/bubbles/textinput"
-	tea "github.com/charmbracelet/bubbletea"
-	"github.com/charmbracelet/lipgloss"
 	"github.com/charmbracelet/x/ansi"
 )
 
@@ -454,9 +455,13 @@ func New(refreshRate time.Duration) Model {
 	ti := textinput.New()
 	ti.Placeholder = "Type text to send (Enter to send, Esc to cancel)"
 	ti.CharLimit = 500
-	ti.Width = 60
-	ti.PromptStyle = lipgloss.NewStyle().Foreground(colorAccent).Bold(true)
-	ti.TextStyle = lipgloss.NewStyle().Foreground(colorTextPri)
+	ti.SetWidth(60)
+	tiStyles := textinput.DefaultStyles(true)
+	tiStyles.Focused.Prompt = lipgloss.NewStyle().Foreground(colorAccent).Bold(true)
+	tiStyles.Focused.Text = lipgloss.NewStyle().Foreground(colorTextPri)
+	tiStyles.Blurred.Prompt = tiStyles.Focused.Prompt
+	tiStyles.Blurred.Text = tiStyles.Focused.Text
+	ti.SetStyles(tiStyles)
 
 	return Model{
 		spinner:         s,
@@ -580,7 +585,7 @@ func readLog(maxLines int) []string {
 
 func (m Model) Init() tea.Cmd {
 	return tea.Batch(
-		m.spinner.Tick,
+		func() tea.Msg { return m.spinner.Tick() },
 		fetchSessions,
 		tickCmd(m.refreshRate),
 	)
@@ -693,11 +698,11 @@ func generateSessionName(cwd string, existingNames []string) string {
 
 func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	switch msg := msg.(type) {
-	case tea.KeyMsg:
+	case tea.KeyPressMsg:
 		// If in text input mode, route all keys to textinput
 		if m.inputMode {
-			switch msg.Type {
-			case tea.KeyEnter:
+			switch msg.String() {
+			case "enter":
 				text := m.textInput.Value()
 				m.inputMode = false
 				m.textInput.Reset()
@@ -707,7 +712,7 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 					return m, sendTextToSession(sessionName, text)
 				}
 				return m, nil
-			case tea.KeyEsc:
+			case "esc":
 				m.inputMode = false
 				m.textInput.Reset()
 				m.textInput.Blur()
@@ -931,9 +936,9 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			// Enter text input mode for selected session
 			if m.cursor < len(m.sessions) {
 				m.inputMode = true
-				m.textInput.Focus()
+				cmd := m.textInput.Focus()
 				m.textInput.SetValue("")
-				return m, m.textInput.Cursor.BlinkCmd()
+				return m, cmd
 			}
 
 		case key.Matches(msg, keys.RenameSession):
@@ -1350,9 +1355,13 @@ func (m Model) shouldUseFullHeader(width, height int) bool {
 	return width >= 90 && height >= 16
 }
 
-func (m Model) View() string {
+func (m Model) View() tea.View {
+	var v tea.View
+	v.AltScreen = true
+
 	if m.err != nil {
-		return fmt.Sprintf("\n  Error: %v\n\n  Press q to quit.\n", m.err)
+		v.SetContent(fmt.Sprintf("\n  Error: %v\n\n  Press q to quit.\n", m.err))
+		return v
 	}
 
 	width := m.width
@@ -1366,7 +1375,8 @@ func (m Model) View() string {
 
 	// If showing log, render log view instead
 	if m.showLog {
-		return m.renderLogView(width, height)
+		v.SetContent(m.renderLogView(width, height))
+		return v
 	}
 
 	isMini := m.shouldUseMiniMode(width)
@@ -1454,7 +1464,8 @@ func (m Model) View() string {
 		sections = append(sections, helpBar)
 	}
 
-	return lipgloss.JoinVertical(lipgloss.Left, sections...)
+	v.SetContent(lipgloss.JoinVertical(lipgloss.Left, sections...))
+	return v
 }
 
 func (m Model) renderLogView(width, height int) string {
@@ -1893,7 +1904,7 @@ func (m Model) renderTableRow(session detector.WaitingSession, selected bool, wa
 	}
 
 	// Determine row background
-	var rowBg lipgloss.Color
+	var rowBg color.Color
 	if selected {
 		rowBg = colorSelected
 	} else if rowIndex%2 == 1 {
