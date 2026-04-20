@@ -2,6 +2,16 @@
 
 A TUI dashboard for monitoring and managing permission prompts across multiple Claude Code (and Codex) sessions running in tmux.
 
+## What It Requires
+
+Permission Guardian is not a generic terminal wrapper. It expects:
+
+- macOS or Linux
+- `tmux`
+- Claude Code and/or Codex running inside tmux panes
+
+If your agent sessions are not running in tmux, `pg` has nothing to monitor or route.
+
 ## Features
 
 - **Live Dashboard**: Monitor all AI agent sessions in real-time
@@ -15,6 +25,8 @@ A TUI dashboard for monitoring and managing permission prompts across multiple C
 ## Installation
 
 Go 1.24+ is only required if you are building from source. For end users, use one of these install paths:
+
+Install methods below only install `pg`. You still need `tmux` installed and your Claude Code/Codex sessions running inside tmux for the app to do anything useful.
 
 ### Homebrew tap
 
@@ -78,6 +90,18 @@ sudo install pg /usr/local/bin/pg
 ```
 
 ## Usage
+
+### Quick Start
+
+1. Install `tmux` if you do not already have it.
+2. Start Claude Code or Codex inside a tmux session.
+3. In another shell, run:
+
+```bash
+pg watch
+```
+
+If `tmux` is not running, or your agent sessions are outside tmux, Permission Guardian will not find any sessions.
 
 ### Interactive Dashboard
 
@@ -174,6 +198,7 @@ In the TUI, `NODEL` is the compact on-screen label for the delete-blocking polic
 
 - macOS or Linux
 - tmux
+- Claude Code and/or Codex sessions running inside tmux
 - Go 1.24+ (only for building from source)
 
 ## License
