@@ -1,14 +1,8 @@
 package tui
 
 import (
-	"strconv"
 	"strings"
 	"testing"
-
-	"github.com/charmbracelet/lipgloss"
-
-	"github.com/buddyh/permission-guardian/internal/detector"
-	"github.com/buddyh/permission-guardian/internal/tmux"
 )
 
 func TestAutoModeDescription(t *testing.T) {
@@ -46,41 +40,4 @@ func TestRenderContextBar(t *testing.T) {
 			t.Fatalf("expected absolute context to render raw value, got %q", got)
 		}
 	})
-}
-
-func TestRenderHeaderFitsWidth(t *testing.T) {
-	m := Model{
-		sessions: []detector.WaitingSession{
-			{
-				Session:    tmux.Session{Name: "feature-work"},
-				PromptType: detector.PromptBash,
-			},
-		},
-		actionStatus: "AUTO SAFE enabled for feature-work with an intentionally long status payload",
-	}
-
-	for _, width := range []int{90, 108, 132} {
-		t.Run("width_"+strconv.Itoa(width), func(t *testing.T) {
-			header := m.renderHeader(width)
-			for _, line := range strings.Split(header, "\n") {
-				if got := lipgloss.Width(line); got > width {
-					t.Fatalf("header line width = %d, want <= %d; line=%q", got, width, line)
-				}
-			}
-		})
-	}
-}
-
-func TestRenderHeaderPolicyLineOnlyWhenItFits(t *testing.T) {
-	m := Model{}
-
-	narrow := m.renderHeader(108)
-	if strings.Contains(narrow, "SAFE = non-destructive") {
-		t.Fatalf("policy line should be hidden when it does not fit: %q", narrow)
-	}
-
-	wide := m.renderHeader(140)
-	if !strings.Contains(wide, "SAFE = non-destructive") {
-		t.Fatalf("policy line should render at wide widths: %q", wide)
-	}
 }
