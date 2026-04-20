@@ -6,7 +6,7 @@ A TUI dashboard for monitoring and managing permission prompts across multiple C
 
 Permission Guardian is not a generic terminal wrapper. It expects:
 
-- macOS or Linux
+- macOS
 - `tmux`
 - Claude Code and/or Codex running inside tmux panes
 
