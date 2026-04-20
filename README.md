@@ -1,6 +1,6 @@
 # Permission Guardian
 
-A TUI dashboard for monitoring and managing permission prompts across multiple Claude Code (and Codex) sessions running in tmux.
+A TUI dashboard for monitoring and managing permission prompts across multiple Claude Code and Codex sessions running in tmux.
 
 ## What It Requires
 
