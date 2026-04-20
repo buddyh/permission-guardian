@@ -41,6 +41,9 @@ var (
 	colorAccent  = lipgloss.Color("#f472b6") // Highlight/accent
 	colorCodex   = lipgloss.Color("#58a6ff") // Distinct blue for Codex labels
 	colorClaude  = lipgloss.Color("#ff7a1a") // True orange for Claude labels
+	colorHero    = lipgloss.Color("#63f3ff") // Neon cyan for v2 composited header
+	colorHeroAlt = lipgloss.Color("#3a86ff") // Electric blue shadow
+	colorHeroFX  = lipgloss.Color("#b517ff") // Purple glow accent
 )
 
 // ═══════════════════════════════════════════════════════════════════════════
@@ -114,6 +117,10 @@ var (
 	// Divider
 	dividerStyle = lipgloss.NewStyle().
 			Foreground(colorBorder)
+
+	headerRuleStyle = lipgloss.NewStyle().
+			Foreground(colorHero).
+			Faint(true)
 )
 
 // ASCII Logo
@@ -1646,16 +1653,44 @@ func (m Model) renderSplitPreview(width, height int) string {
 	return panelStyle.Width(width).Render(content)
 }
 
+func renderCompositedText(content string, front, shadow, glow lipgloss.Style, shadowOffsetX, shadowOffsetY int) string {
+	comp := lipgloss.NewCompositor(
+		lipgloss.NewLayer(glow.Render(content)).X(2).Y(1).Z(0),
+		lipgloss.NewLayer(shadow.Render(content)).X(shadowOffsetX).Y(shadowOffsetY).Z(1),
+		lipgloss.NewLayer(front.Render(content)).Z(2),
+	)
+	return comp.Render()
+}
+
 func (m Model) renderHeader(width int) string {
+	logoFrontStyle := lipgloss.NewStyle().Foreground(colorHero).Bold(true)
+	logoShadowStyle := lipgloss.NewStyle().Foreground(colorHeroAlt).Bold(true)
+	logoGlowStyle := lipgloss.NewStyle().Foreground(colorHeroFX).Faint(true)
+	titleFrontStyle := lipgloss.NewStyle().Foreground(colorHero).Bold(true)
+	titleShadowStyle := lipgloss.NewStyle().Foreground(colorHeroAlt).Bold(true)
+	titleGlowStyle := lipgloss.NewStyle().Foreground(colorHeroFX).Faint(true)
+
 	logoBlock := lipgloss.NewStyle().
 		Padding(1, 0, 0, 2).
-		Render(logoStyle.Render(logo))
+		Render(renderCompositedText(logo, logoFrontStyle, logoShadowStyle, logoGlowStyle, 1, 1))
+
+	titleMain := renderCompositedText("Permission Guardian", titleFrontStyle, titleShadowStyle, titleGlowStyle, 1, 1)
 	titleLines := []string{
-		statusAccent.Render("Permission Guardian"),
+		titleMain,
 		logoSubStyle.Render("tmux approval router for Claude Code + Codex"),
 	}
 	if width >= 120 {
 		titleLines = append(titleLines, detailLabelStyle.Render("SAFE = non-destructive  •  NODEL = no delete ops  •  ALL = everything"))
+	}
+	if width >= 100 {
+		ruleWidth := width / 5
+		if ruleWidth > 26 {
+			ruleWidth = 26
+		}
+		if ruleWidth < 12 {
+			ruleWidth = 12
+		}
+		titleLines = append(titleLines, headerRuleStyle.Render(strings.Repeat("═", ruleWidth)))
 	}
 	titleBlock := lipgloss.NewStyle().
 		PaddingTop(3).
@@ -1712,7 +1747,13 @@ func (m Model) renderHeader(width int) string {
 
 	header := lipgloss.JoinHorizontal(lipgloss.Center, leftBlock, "    ", statsBlock)
 
-	return lipgloss.NewStyle().PaddingTop(1).Render(header)
+	return lipgloss.NewStyle().
+		BorderBottom(true).
+		BorderStyle(lipgloss.NormalBorder()).
+		BorderForegroundBlend(colorHeroAlt, colorHero, colorAccent).
+		PaddingTop(1).
+		PaddingBottom(1).
+		Render(header)
 }
 
 // renderMiniHeader renders a compact single-line header for mini mode

@@ -1,5 +1,6 @@
 # Binaries
 pg
+pg2
 *.exe
 *.dll
 *.so
