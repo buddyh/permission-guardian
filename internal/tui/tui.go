@@ -1636,20 +1636,18 @@ func (m Model) renderSplitPreview(width, height int) string {
 }
 
 func (m Model) renderHeader(width int) string {
+	const (
+		headerGap     = 4
+		titleGap      = 2
+		minTitleWidth = 34
+	)
+
+	policyText := "SAFE = non-destructive  •  NODEL = no delete ops  •  ALL = everything"
+
 	logoBlock := lipgloss.NewStyle().
 		Padding(1, 0, 0, 2).
 		Render(logoStyle.Render(logo))
-	titleLines := []string{
-		statusAccent.Render("Permission Guardian"),
-		logoSubStyle.Render("tmux approval router for Claude Code + Codex"),
-	}
-	if width >= 120 {
-		titleLines = append(titleLines, detailLabelStyle.Render("SAFE = non-destructive  •  NODEL = no delete ops  •  ALL = everything"))
-	}
-	titleBlock := lipgloss.NewStyle().
-		PaddingTop(3).
-		Render(lipgloss.JoinVertical(lipgloss.Left, titleLines...))
-	leftBlock := lipgloss.JoinHorizontal(lipgloss.Top, logoBlock, "  ", titleBlock)
+	logoWidth := lipgloss.Width(logoBlock)
 
 	// Stats section
 	waiting := m.getWaitingSessions()
@@ -1674,19 +1672,23 @@ func (m Model) renderHeader(width int) string {
 	// Action status
 	actionLine := ""
 	if m.actionStatus != "" {
+		actionStatus := m.actionStatus
+		if len(actionStatus) > 42 {
+			actionStatus = smartTruncate(actionStatus, 42)
+		}
 		switch {
 		case strings.HasPrefix(m.actionStatus, "approved+remembered"):
-			actionLine = statusAccent.Render("  " + m.actionStatus + " (won't ask again)")
+			actionLine = statusAccent.Render("  " + actionStatus + " (won't ask again)")
 		case strings.HasPrefix(m.actionStatus, "approved"):
-			actionLine = statusApproved.Render("  " + m.actionStatus)
+			actionLine = statusApproved.Render("  " + actionStatus)
 		case strings.HasPrefix(m.actionStatus, "denied"):
-			actionLine = statusDenied.Render("  " + m.actionStatus)
+			actionLine = statusDenied.Render("  " + actionStatus)
 		case strings.HasPrefix(m.actionStatus, "AUTO OFF"):
-			actionLine = statusIdle.Render("  " + m.actionStatus)
+			actionLine = statusIdle.Render("  " + actionStatus)
 		case strings.HasPrefix(m.actionStatus, "AUTO "), strings.HasPrefix(m.actionStatus, "BURST "):
-			actionLine = statusAuto.Render("  " + m.actionStatus)
+			actionLine = statusAuto.Render("  " + actionStatus)
 		default:
-			actionLine = detailValueStyle.Render("  " + m.actionStatus)
+			actionLine = detailValueStyle.Render("  " + actionStatus)
 		}
 	}
 
@@ -1698,10 +1700,52 @@ func (m Model) renderHeader(width int) string {
 		statsLines = append(statsLines, actionLine)
 	}
 	statsBlock := lipgloss.JoinVertical(lipgloss.Left, statsLines...)
+	statsWidth := lipgloss.Width(statsBlock)
 
-	header := lipgloss.JoinHorizontal(lipgloss.Center, leftBlock, "    ", statsBlock)
+	titleWidth := width - logoWidth - titleGap
+	statsOnTopRow := false
+	if width >= logoWidth+titleGap+minTitleWidth+headerGap+statsWidth {
+		statsOnTopRow = true
+		titleWidth = width - statsWidth - headerGap - logoWidth - titleGap
+	}
+	if titleWidth < minTitleWidth {
+		titleWidth = minTitleWidth
+	}
 
-	return lipgloss.NewStyle().PaddingTop(1).Render(header)
+	titleLines := []string{
+		statusAccent.Render("Permission Guardian"),
+		logoSubStyle.Render("tmux approval router for Claude Code + Codex"),
+	}
+	titleBlock := lipgloss.NewStyle().
+		PaddingTop(3).
+		Width(titleWidth).
+		Render(lipgloss.JoinVertical(lipgloss.Left, titleLines...))
+	leftBlock := lipgloss.JoinHorizontal(lipgloss.Top, logoBlock, strings.Repeat(" ", titleGap), titleBlock)
+
+	var sections []string
+	if statsOnTopRow {
+		spacerWidth := width - lipgloss.Width(leftBlock) - statsWidth
+		if spacerWidth < headerGap {
+			spacerWidth = headerGap
+		}
+		topRow := lipgloss.JoinHorizontal(lipgloss.Top, leftBlock, strings.Repeat(" ", spacerWidth), statsBlock)
+		sections = append(sections, topRow)
+	} else {
+		sections = append(sections, leftBlock)
+		sections = append(sections, lipgloss.PlaceHorizontal(width, lipgloss.Right, statsBlock))
+	}
+
+	policyInset := logoWidth + titleGap
+	if width >= 120 && width-policyInset >= lipgloss.Width(policyText) {
+		sections = append(sections, lipgloss.NewStyle().
+			PaddingLeft(policyInset).
+			Render(detailLabelStyle.Render(policyText)))
+	}
+
+	return lipgloss.NewStyle().
+		Width(width).
+		PaddingTop(1).
+		Render(lipgloss.JoinVertical(lipgloss.Left, sections...))
 }
 
 // renderMiniHeader renders a compact single-line header for mini mode
