@@ -67,7 +67,7 @@ var (
 
 	// Session list styles
 	sessionNameStyle = lipgloss.NewStyle().
-				Foreground(lipgloss.Color("#b388ff")).
+				Foreground(lipgloss.Color("#9fe870")).
 				Bold(true)
 
 	// Status styles
